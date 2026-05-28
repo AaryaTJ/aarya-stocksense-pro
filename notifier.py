@@ -429,6 +429,92 @@ def get_gemini_answer(ticker: str, question: str, result: dict = None) -> str:
         return f"Gemini error: {e}"
 
 
+def get_gemini_deep_analysis(ticker: str, result: dict) -> str:
+    """
+    Deep verified analysis for the Telegram bot.
+    Explains WHY the signal is what it is, checks fundamentals,
+    gives clear pros/cons and a final verdict.
+    """
+    client, err = _gemini_client()
+    if err:
+        return err
+    try:
+        cur     = result.get("currency", "$")
+        sig     = result.get("signal", "?")
+        price   = result.get("price", "?")
+        minn    = result.get("minervini_score", "?")
+        rs      = result.get("rs_score", "?")
+        wp      = result.get("win_prob", "?")
+        entry   = result.get("entry", "?")
+        stop    = result.get("stop", "?")
+        rr      = result.get("rr", {})
+        t1, t2  = rr.get("t1", "?"), rr.get("t2", "?")
+        verdict = result.get("verdict", "")
+        hold    = result.get("hold_days", "?")
+
+        prompt = f"""You are a senior stock analyst for Aarya StockSense Pro. Our technical screening system has just analyzed {ticker} and produced these verified results:
+
+SIGNAL: {sig}
+PRICE: {cur}{price}
+ENTRY: {cur}{entry} | STOP LOSS: {cur}{stop} | T1: {cur}{t1} | T2: {cur}{t2}
+MINERVINI SCORE: {minn}/8  (checks: price above 50MA > 150MA > 200MA, near 52-week high, strong RS vs market)
+RS SCORE: {rs}/100  (relative strength — how this stock performs vs the broader market)
+WIN PROBABILITY: {wp}%
+SUGGESTED HOLD: {hold} days
+SYSTEM VERDICT: {verdict}
+
+Now provide a DEEP, VERIFIED, BALANCED analysis with these 5 sections:
+
+1. WHY THIS SIGNAL
+Explain specifically what the Minervini score of {minn}/8 and RS score of {rs} tell us about this stock's trend strength. What is the technical data saying?
+
+2. FUNDAMENTAL VERIFICATION
+Based on your knowledge of {ticker} — do the earnings, revenue growth, debt levels, and recent news support OR contradict this {sig} signal? Name specific recent catalysts or concerns.
+
+3. WHY IT'S GOOD (bullish case)
+Give 2-3 specific, data-backed reasons to be optimistic.
+
+4. WHY IT'S RISKY (bearish case)
+Give 2-3 specific risks or red flags — macro, sector, company-specific.
+
+5. FINAL VERDICT
+One clear sentence: should the user act on this signal now, wait for a better entry, or avoid entirely? Be direct.
+
+Keep total response under 280 words. Be specific — use numbers, names, facts. Not generic advice.
+End with: "⚠️ Not financial advice — always verify before trading."
+"""
+        resp = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+        return resp.text
+    except Exception as e:
+        return f"Gemini error: {e}"
+
+
+def get_gemini_question_answer(question: str) -> str:
+    """Answer any financial question — stocks, MF, SIP, SWP, market concepts."""
+    client, err = _gemini_client()
+    if err:
+        return err
+    try:
+        prompt = f"""You are Aarya, a professional financial advisor assistant for Indian and US markets.
+
+A user asked: "{question}"
+
+Answer this thoroughly covering:
+- Direct answer to the question with specific facts/numbers
+- If about a mutual fund or SIP/SWP: mention specific fund names, returns, tax implications relevant to India
+- If about a stock: mention fundamentals, recent performance, sector outlook
+- Pros AND cons / risks
+- A clear recommendation or next step
+
+Keep response under 250 words. Be specific — use actual numbers, fund names, percentages.
+End with: "⚠️ Not financial advice — consult a SEBI-registered advisor for personal decisions."
+"""
+        resp = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+        return resp.text
+    except Exception as e:
+        return f"Gemini error: {e}"
+
+
 # ── TELEGRAM ──────────────────────────────────────────────────────────
 
 def _get_tg_creds() -> tuple[str, str]:
