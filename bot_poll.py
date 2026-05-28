@@ -153,7 +153,7 @@ def handle_stock(ticker: str, chat_id: str, mc=None):
                 mc = alt
 
         if result is None:
-            send(f"❌ No data for {ticker}. Check the ticker symbol and try again.", chat_id)
+            send(f"❌ No data for {ticker}. Check the ticker symbol.", chat_id)
             return
 
         cur  = result.get("currency", "$")
@@ -162,28 +162,23 @@ def handle_stock(ticker: str, chat_id: str, mc=None):
         icon = {"BUY TODAY": "🟢", "PREPARE TO BUY": "🟡",
                 "WAIT": "⏳", "AVOID": "🔴"}.get(sig, "⚪")
 
-        tech = (
-            f"{'═'*30}\n"
-            f"📊 {ticker}  —  {icon} {sig}\n"
-            f"{'═'*30}\n\n"
-            f"💰 Price:  {cur}{result.get('price','—')}\n\n"
-            f"📈 TRADE LEVELS\n"
-            f"   Entry  {cur}{result.get('entry','—')}\n"
-            f"   Stop   {cur}{result.get('stop','—')}\n"
-            f"   T1     {cur}{rr.get('t1','—')}\n"
-            f"   T2     {cur}{rr.get('t2','—')}\n"
-            f"   T3     {cur}{rr.get('t3','—')}\n\n"
-            f"📐 SCORES\n"
-            f"   Minervini  {result.get('minervini_score','?')}/8\n"
-            f"   RS Score   {result.get('rs_score','?')}/100\n"
-            f"   Win Prob   {result.get('win_prob','?')}%\n"
-            f"   Hold       {result.get('hold_days','?')} days\n"
-        )
-        send(tech, chat_id)
+        # Get compact 3-line AI verdict
+        ai = notifier.get_gemini_compact_verdict(ticker, result)
 
-        send("🤖 Running AI deep analysis & verification...", chat_id)
-        ai = notifier.get_gemini_deep_analysis(ticker, result)
-        send(f"🤖 AI ANALYSIS\n{'─'*28}\n{ai}", chat_id)
+        msg = (
+            f"📊 {ticker}  {icon} {sig}\n"
+            f"{'─'*28}\n"
+            f"Price:  {cur}{result.get('price','—')}\n"
+            f"Entry:  {cur}{result.get('entry','—')}  |  Stop: {cur}{result.get('stop','—')}\n"
+            f"T1:     {cur}{rr.get('t1','—')}  |  T2:   {cur}{rr.get('t2','—')}\n"
+            f"Win:    {result.get('win_prob','?')}%"
+            f"  |  Minervini: {result.get('minervini_score','?')}/8\n"
+        )
+        if ai:
+            msg += f"\n{ai}\n"
+        msg += "\n⚠️ Not financial advice."
+
+        send(msg, chat_id)
 
     except Exception as e:
         log.error(f"handle_stock error {ticker}: {e}")
@@ -232,19 +227,18 @@ def handle_picks(chat_id: str):
         send("No strong buy setups right now. Market may be weak.", chat_id)
         return
 
-    send(f"✅ Top {min(3,len(all_picks))} setups found:", chat_id)
+    lines = [f"📈 Top {min(3,len(all_picks))} Setups Today\n{'─'*28}"]
     for i, p in enumerate(all_picks[:3], 1):
         cur  = p.get("currency", "$")
         rr   = p.get("rr", {})
         icon = "🟢" if p["signal"] == "BUY TODAY" else "🟡"
-        send(
+        lines.append(
             f"#{i} {icon} {p.get('ticker','?')} — {p.get('signal','?')}\n"
-            f"{p.get('market_label','')}\n"
             f"Entry: {cur}{p.get('entry','—')} | Stop: {cur}{p.get('stop','—')}\n"
-            f"T1: {cur}{rr.get('t1','—')} | T2: {cur}{rr.get('t2','—')}\n"
-            f"Win: {p.get('win_prob','?')}% | Minervini: {p.get('minervini_score','?')}/8",
-            chat_id,
+            f"T1: {cur}{rr.get('t1','—')} | Win: {p.get('win_prob','?')}%"
         )
+    lines.append("\n⚠️ Not financial advice.")
+    send("\n\n".join(lines), chat_id)
 
 
 def handle_question(text: str, chat_id: str):

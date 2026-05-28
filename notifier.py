@@ -429,6 +429,30 @@ def get_gemini_answer(ticker: str, question: str, result: dict = None) -> str:
         return f"Gemini error: {e}"
 
 
+def get_gemini_compact_verdict(ticker: str, result: dict) -> str:
+    """3-line compact verdict for Telegram — why good, why risky, act or avoid."""
+    client, err = _gemini_client()
+    if err:
+        return ""
+    try:
+        prompt = (
+            f"Stock: {ticker} | Signal: {result.get('signal','?')} | "
+            f"Price: {result.get('currency','$')}{result.get('price','?')} | "
+            f"Minervini: {result.get('minervini_score','?')}/8 | "
+            f"RS: {result.get('rs_score','?')}/100 | "
+            f"Win prob: {result.get('win_prob','?')}%\n\n"
+            f"Reply in EXACTLY 3 lines, no headers:\n"
+            f"✅ [One specific reason this is a good setup]\n"
+            f"⚠️ [One specific risk right now]\n"
+            f"📌 [Direct verdict: act now / wait for entry / avoid — be specific]\n\n"
+            f"Max 50 words total. Use real company facts, not generic statements."
+        )
+        resp = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+        return resp.text.strip()
+    except Exception as e:
+        return ""
+
+
 def get_gemini_deep_analysis(ticker: str, result: dict) -> str:
     """
     Deep verified analysis for the Telegram bot.
