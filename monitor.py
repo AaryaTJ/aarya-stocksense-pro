@@ -230,10 +230,10 @@ def run():
         except Exception as e:
             log.error(f"Daily top-3 email error: {e}")
         try:
-            ok, msg = notifier.wa_daily_top3(picks)
-            log.info(f"Daily top-3 WhatsApp: {'✅ ' + msg if ok else '❌ ' + msg}")
+            ok, msg = notifier.tg_daily_top3(picks)
+            log.info(f"Daily top-3 Telegram: {'✅ ' + msg if ok else '❌ ' + msg}")
         except Exception as e:
-            log.error(f"Daily top-3 WhatsApp error: {e}")
+            log.error(f"Daily top-3 Telegram error: {e}")
     else:
         log.info("No strong buy picks found today — daily email skipped.")
 
@@ -252,10 +252,10 @@ def run():
         except Exception as e:
             log.error(f"Penny spike email error: {e}")
         try:
-            ok, msg = notifier.wa_penny_spikes(spikes)
-            log.info(f"Penny spike WhatsApp: {'✅ ' + msg if ok else '❌ ' + msg}")
+            ok, msg = notifier.tg_penny_spikes(spikes)
+            log.info(f"Penny spike Telegram: {'✅ ' + msg if ok else '❌ ' + msg}")
         except Exception as e:
-            log.error(f"Penny spike WhatsApp error: {e}")
+            log.error(f"Penny spike Telegram error: {e}")
     else:
         log.info("No penny spikes today — penny email skipped.")
 
@@ -275,10 +275,10 @@ def run():
             except Exception as e:
                 log.error(f"Sell alert email error: {e}")
             try:
-                ok, msg = notifier.wa_sell_alert(pos, m)
-                log.info(f"Sell alert WhatsApp for {pos.get('ticker','?')}: {'✅ ' + msg if ok else '❌ ' + msg}")
+                ok, msg = notifier.tg_sell_alert(pos, m)
+                log.info(f"Sell alert Telegram for {pos.get('ticker','?')}: {'✅ ' + msg if ok else '❌ ' + msg}")
             except Exception as e:
-                log.error(f"Sell alert WhatsApp error: {e}")
+                log.error(f"Sell alert Telegram error: {e}")
     else:
         log.info("All portfolio positions are healthy — no sell alerts.")
 

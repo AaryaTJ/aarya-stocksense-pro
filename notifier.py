@@ -429,54 +429,55 @@ def get_gemini_answer(ticker: str, question: str, result: dict = None) -> str:
         return f"Gemini error: {e}"
 
 
-# ── WHATSAPP (CallMeBot — free) ────────────────────────────────────────
+# ── TELEGRAM ──────────────────────────────────────────────────────────
 
-def _get_wa_creds() -> tuple[str, str]:
-    """Return (phone, api_key). Phone = international digits, no +."""
-    phone = api_key = ""
+def _get_tg_creds() -> tuple[str, str]:
+    """Return (bot_token, chat_id)."""
+    token = chat_id = ""
     # 1. Local config file
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE) as f:
                 d = json.load(f)
-            wa      = d.get("whatsapp", {})
-            phone   = wa.get("phone", "")
-            api_key = wa.get("api_key", "")
+            tg      = d.get("telegram", {})
+            token   = tg.get("token", "")
+            chat_id = tg.get("chat_id", "")
         except Exception:
             pass
     # 2. Streamlit secrets
-    if not phone or not api_key:
+    if not token or not chat_id:
         try:
             import streamlit as st
-            phone   = phone   or str(st.secrets.get("WHATSAPP_PHONE",  ""))
-            api_key = api_key or str(st.secrets.get("WHATSAPP_APIKEY", ""))
+            token   = token   or str(st.secrets.get("TELEGRAM_TOKEN",   ""))
+            chat_id = chat_id or str(st.secrets.get("TELEGRAM_CHAT_ID", ""))
         except Exception:
             pass
     # 3. Environment variables (GitHub Actions)
-    if not phone:
-        phone   = os.environ.get("WHATSAPP_PHONE",  "")
-    if not api_key:
-        api_key = os.environ.get("WHATSAPP_APIKEY", "")
-    return phone.strip(), api_key.strip()
+    if not token:
+        token   = os.environ.get("TELEGRAM_TOKEN",   "")
+    if not chat_id:
+        chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    return token.strip(), chat_id.strip()
 
 
-def send_whatsapp(message: str) -> tuple[bool, str]:
-    """Send a WhatsApp message via CallMeBot (free tier)."""
-    phone, api_key = _get_wa_creds()
-    if not phone or not api_key:
-        return False, "WhatsApp not configured (WHATSAPP_PHONE / WHATSAPP_APIKEY missing)."
+def send_telegram(message: str) -> tuple[bool, str]:
+    token, chat_id = _get_tg_creds()
+    if not token or not chat_id:
+        return False, "Telegram not configured."
     try:
-        url = (f"https://api.callmebot.com/whatsapp.php"
-               f"?phone={phone}&text={urllib.parse.quote(message)}&apikey={api_key}")
-        r = requests.get(url, timeout=15)
-        if r.status_code == 200:
-            return True, "WhatsApp sent."
-        return False, f"CallMeBot error {r.status_code}: {r.text[:120]}"
+        r = requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": message, "parse_mode": "Markdown"},
+            timeout=15,
+        )
+        if r.status_code == 200 and r.json().get("ok"):
+            return True, "Telegram sent."
+        return False, r.json().get("description", r.text[:120])
     except Exception as e:
         return False, str(e)
 
 
-def wa_daily_top3(picks: list) -> tuple[bool, str]:
+def tg_daily_top3(picks: list) -> tuple[bool, str]:
     if not picks:
         return False, "No picks."
     lines = ["📈 *Aarya Top Picks*"]
@@ -488,25 +489,25 @@ def wa_daily_top3(picks: list) -> tuple[bool, str]:
             f"\nEntry: {cur}{p.get('entry','—')} | Stop: {cur}{p.get('stop','—')}"
             f" | T1: {cur}{rr.get('t1','—')} | Win: {p.get('win_prob','?')}%"
         )
-    lines.append("\n_Open the app for full analysis. Not financial advice._")
-    return send_whatsapp("\n".join(lines))
+    lines.append("\n_Open the app for full analysis\\. Not financial advice\\._")
+    return send_telegram("\n".join(lines))
 
 
-def wa_penny_spikes(spikes: list) -> tuple[bool, str]:
+def tg_penny_spikes(spikes: list) -> tuple[bool, str]:
     if not spikes:
         return False, "No spikes."
     lines = [f"⚡ *Penny Spike Alert — {len(spikes)} stock(s)*"]
     for s in spikes:
         cur = s.get("currency", "$")
         lines.append(
-            f"\n*{s['ticker']}*: +{s['change']:.1f}% @ {cur}{s['price']:.2f}"
-            f" ({s.get('vol_ratio',1):.1f}x vol)"
+            f"\n*{s['ticker']}*: \\+{s['change']:.1f}% @ {cur}{s['price']:.2f}"
+            f" \\({s.get('vol_ratio',1):.1f}x vol\\)"
         )
-    lines.append("\n⚠️ _High risk. Verify live price before acting._")
-    return send_whatsapp("\n".join(lines))
+    lines.append("\n⚠️ _High risk\\. Verify live price before acting\\._")
+    return send_telegram("\n".join(lines))
 
 
-def wa_sell_alert(pos: dict, monitor: dict) -> tuple[bool, str]:
+def tg_sell_alert(pos: dict, monitor: dict) -> tuple[bool, str]:
     ticker = monitor.get("ticker", "?")
     action = monitor.get("action", "?")
     cur    = monitor.get("currency", "$")
@@ -516,7 +517,7 @@ def wa_sell_alert(pos: dict, monitor: dict) -> tuple[bool, str]:
         f"🚨 *ACTION REQUIRED*\n"
         f"*{ticker}* — {action}\n"
         f"Entry: {cur}{monitor.get('entry','—')} → Now: {cur}{monitor.get('current','—')}\n"
-        f"P&L: {cur}{pnl:+.2f} ({pct:+.1f}%)\n"
-        f"_Open the app to act._"
+        f"P&L: {cur}{pnl:+.2f} \\({pct:+.1f}%\\)\n"
+        f"_Open the app to act\\._"
     )
-    return send_whatsapp(msg)
+    return send_telegram(msg)
