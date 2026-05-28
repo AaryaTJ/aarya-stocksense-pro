@@ -3,8 +3,37 @@ Aarya StockSense Pro — db.py
 Per-user database operations and admin user management (Supabase).
 """
 
-from supabase_client import _get_client, _get_admin_client
+import requests
+from supabase_client import _get_client
 from config import DEFAULTS
+
+
+# ── Helpers for direct Admin REST API calls ───────────────────────────
+
+def _admin_base() -> tuple[str, dict] | tuple[None, None]:
+    """Return (base_url, headers) for Supabase Auth Admin REST calls."""
+    import os
+    url = key = ""
+    try:
+        import streamlit as st
+        url = str(st.secrets.get("SUPABASE_URL", ""))
+        key = str(st.secrets.get("SUPABASE_SERVICE_KEY", "")
+                  or st.secrets.get("SUPABASE_KEY", ""))
+    except Exception:
+        pass
+    if not url:
+        url = os.environ.get("SUPABASE_URL", "")
+    if not key:
+        key = os.environ.get("SUPABASE_SERVICE_KEY",
+                             os.environ.get("SUPABASE_KEY", ""))
+    if not url or not key:
+        return None, None
+    headers = {
+        "apikey":        key,
+        "Authorization": f"Bearer {key}",
+        "Content-Type":  "application/json",
+    }
+    return f"{url}/auth/v1/admin", headers
 
 
 # ── Per-User Settings ──────────────────────────────────────────────────
@@ -40,31 +69,33 @@ def save_user_settings(user_id: str, data: dict) -> bool:
 
 def list_users() -> tuple[list, str]:
     """Returns (users_list, error_message). error_message is '' on success."""
-    client = _get_admin_client()
-    if not client:
+    base, headers = _admin_base()
+    if not base:
         return [], "Database not connected."
     try:
-        resp = client.auth.admin.list_users()
-        # supabase-py may return a list directly or a paginated object
-        if hasattr(resp, "users"):
-            auth_users = resp.users
-        elif isinstance(resp, list):
-            auth_users = resp
-        else:
-            auth_users = list(resp)
+        r = requests.get(f"{base}/users", headers=headers, timeout=10)
+        if r.status_code != 200:
+            return [], r.json().get("message", r.text)
+        data = r.json()
+        # response may be a list or {"users": [...]}
+        auth_users = data if isinstance(data, list) else data.get("users", [])
 
-        profiles_r = _get_client().table("user_profiles").select("*").execute()
-        profiles   = {p["id"]: p for p in (profiles_r.data or [])}
+        client = _get_client()
+        profiles = {}
+        if client:
+            pr = client.table("user_profiles").select("*").execute()
+            profiles = {p["id"]: p for p in (pr.data or [])}
+
         result = []
         for u in auth_users:
-            pid = str(u.id)
+            pid = str(u.get("id", ""))
             p   = profiles.get(pid, {})
             ll  = str(p.get("last_login") or "Never")[:10]
-            ca  = getattr(u, "created_at", None)
+            ca  = u.get("created_at", "")
             result.append({
                 "id":         pid,
-                "email":      u.email or "—",
-                "created":    str(ca)[:10] if ca else "—",
+                "email":      u.get("email") or "—",
+                "created":    ca[:10] if ca else "—",
                 "last_login": ll,
                 "role":       p.get("role", "user"),
                 "blocked":    bool(p.get("is_blocked", False)),
@@ -75,23 +106,23 @@ def list_users() -> tuple[list, str]:
 
 
 def create_user(email: str, password: str) -> tuple[bool, str]:
-    client = _get_admin_client()
-    if not client:
+    base, headers = _admin_base()
+    if not base:
         return False, "Database not available."
     try:
-        resp = client.auth.admin.create_user({
-            "email": email.strip().lower(),
-            "password": password,
-            "email_confirm": True,
+        r = requests.post(f"{base}/users", headers=headers, timeout=10, json={
+            "email":          email.strip().lower(),
+            "password":       password,
+            "email_confirm":  True,
         })
-        if resp.user:
+        if r.status_code in (200, 201):
             return True, f"User {email} created successfully."
-        return False, "Failed to create user."
-    except Exception as e:
-        msg = str(e)
+        msg = r.json().get("message", r.text)
         if "already" in msg.lower():
             return False, f"{email} is already registered."
         return False, f"Error: {msg}"
+    except Exception as e:
+        return False, str(e)
 
 
 def block_user(user_id: str) -> tuple[bool, str]:
@@ -121,11 +152,13 @@ def unblock_user(user_id: str) -> tuple[bool, str]:
 
 
 def delete_user(user_id: str) -> tuple[bool, str]:
-    client = _get_admin_client()
-    if not client:
+    base, headers = _admin_base()
+    if not base:
         return False, "DB error"
     try:
-        client.auth.admin.delete_user(user_id)
-        return True, "User deleted."
+        r = requests.delete(f"{base}/users/{user_id}", headers=headers, timeout=10)
+        if r.status_code in (200, 204):
+            return True, "User deleted."
+        return False, r.json().get("message", r.text)
     except Exception as e:
         return False, str(e)
