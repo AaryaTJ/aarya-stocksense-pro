@@ -2,11 +2,21 @@ name: Aarya Background Monitor
 
 on:
   schedule:
-    # 9:45 AM IST (Mon-Fri) — Indian market early session
-    - cron: '15 4 * * 1-5'
-    # 3:45 PM IST (Mon-Fri) — Indian market close / US pre-open
-    - cron: '15 10 * * 1-5'
-  workflow_dispatch:  # allow manual run from GitHub Actions tab
+    # ── Indian market hours (IST = UTC+5:30) ──────────────────────────
+    # 9:00 AM IST  — market open
+    - cron: '30 3 * * 1-5'
+    # 11:00 AM IST — mid-morning
+    - cron: '30 5 * * 1-5'
+    # 1:00 PM IST  — post-lunch
+    - cron: '30 7 * * 1-5'
+    # 3:00 PM IST  — near India close
+    - cron: '30 9 * * 1-5'
+    # ── US market hours (EDT = UTC-4, May–Oct) ────────────────────────
+    # 7:00 PM IST  — US market open (9:30 AM EDT)
+    - cron: '30 13 * * 1-5'
+    # 11:00 PM IST — US mid-session
+    - cron: '30 17 * * 1-5'
+  workflow_dispatch:   # manual run from GitHub Actions tab
 
 jobs:
   monitor:
@@ -35,3 +45,5 @@ jobs:
           EMAIL_SENDER:      ${{ secrets.EMAIL_SENDER }}
           EMAIL_PASSWORD:    ${{ secrets.EMAIL_PASSWORD }}
           EMAIL_RECIPIENTS:  ${{ secrets.EMAIL_RECIPIENTS }}
+          WHATSAPP_PHONE:    ${{ secrets.WHATSAPP_PHONE }}
+          WHATSAPP_APIKEY:   ${{ secrets.WHATSAPP_APIKEY }}

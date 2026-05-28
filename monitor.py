@@ -229,6 +229,11 @@ def run():
             log.info(f"Daily top-3 email: {'✅ ' + msg if ok else '❌ ' + msg}")
         except Exception as e:
             log.error(f"Daily top-3 email error: {e}")
+        try:
+            ok, msg = notifier.wa_daily_top3(picks)
+            log.info(f"Daily top-3 WhatsApp: {'✅ ' + msg if ok else '❌ ' + msg}")
+        except Exception as e:
+            log.error(f"Daily top-3 WhatsApp error: {e}")
     else:
         log.info("No strong buy picks found today — daily email skipped.")
 
@@ -246,6 +251,11 @@ def run():
             log.info(f"Penny spike email: {'✅ ' + msg if ok else '❌ ' + msg}")
         except Exception as e:
             log.error(f"Penny spike email error: {e}")
+        try:
+            ok, msg = notifier.wa_penny_spikes(spikes)
+            log.info(f"Penny spike WhatsApp: {'✅ ' + msg if ok else '❌ ' + msg}")
+        except Exception as e:
+            log.error(f"Penny spike WhatsApp error: {e}")
     else:
         log.info("No penny spikes today — penny email skipped.")
 
@@ -264,6 +274,11 @@ def run():
                 log.info(f"Sell alert for {pos.get('ticker','?')}: {'✅ ' + msg if ok else '❌ ' + msg}")
             except Exception as e:
                 log.error(f"Sell alert email error: {e}")
+            try:
+                ok, msg = notifier.wa_sell_alert(pos, m)
+                log.info(f"Sell alert WhatsApp for {pos.get('ticker','?')}: {'✅ ' + msg if ok else '❌ ' + msg}")
+            except Exception as e:
+                log.error(f"Sell alert WhatsApp error: {e}")
     else:
         log.info("All portfolio positions are healthy — no sell alerts.")
 

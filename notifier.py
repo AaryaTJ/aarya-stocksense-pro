@@ -7,9 +7,12 @@ import json
 import os
 import smtplib
 import ssl
+import urllib.parse
 from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+
+import requests
 
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "aarya_config.json")
 
@@ -424,3 +427,96 @@ def get_gemini_answer(ticker: str, question: str, result: dict = None) -> str:
         return resp.text
     except Exception as e:
         return f"Gemini error: {e}"
+
+
+# ── WHATSAPP (CallMeBot — free) ────────────────────────────────────────
+
+def _get_wa_creds() -> tuple[str, str]:
+    """Return (phone, api_key). Phone = international digits, no +."""
+    phone = api_key = ""
+    # 1. Local config file
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE) as f:
+                d = json.load(f)
+            wa      = d.get("whatsapp", {})
+            phone   = wa.get("phone", "")
+            api_key = wa.get("api_key", "")
+        except Exception:
+            pass
+    # 2. Streamlit secrets
+    if not phone or not api_key:
+        try:
+            import streamlit as st
+            phone   = phone   or str(st.secrets.get("WHATSAPP_PHONE",  ""))
+            api_key = api_key or str(st.secrets.get("WHATSAPP_APIKEY", ""))
+        except Exception:
+            pass
+    # 3. Environment variables (GitHub Actions)
+    if not phone:
+        phone   = os.environ.get("WHATSAPP_PHONE",  "")
+    if not api_key:
+        api_key = os.environ.get("WHATSAPP_APIKEY", "")
+    return phone.strip(), api_key.strip()
+
+
+def send_whatsapp(message: str) -> tuple[bool, str]:
+    """Send a WhatsApp message via CallMeBot (free tier)."""
+    phone, api_key = _get_wa_creds()
+    if not phone or not api_key:
+        return False, "WhatsApp not configured (WHATSAPP_PHONE / WHATSAPP_APIKEY missing)."
+    try:
+        url = (f"https://api.callmebot.com/whatsapp.php"
+               f"?phone={phone}&text={urllib.parse.quote(message)}&apikey={api_key}")
+        r = requests.get(url, timeout=15)
+        if r.status_code == 200:
+            return True, "WhatsApp sent."
+        return False, f"CallMeBot error {r.status_code}: {r.text[:120]}"
+    except Exception as e:
+        return False, str(e)
+
+
+def wa_daily_top3(picks: list) -> tuple[bool, str]:
+    if not picks:
+        return False, "No picks."
+    lines = ["📈 *Aarya Top Picks*"]
+    for i, p in enumerate(picks[:3], 1):
+        cur = p.get("currency", "$")
+        rr  = p.get("rr", {})
+        lines.append(
+            f"\n#{i} *{p.get('ticker','?')}* — {p.get('signal','?')}"
+            f"\nEntry: {cur}{p.get('entry','—')} | Stop: {cur}{p.get('stop','—')}"
+            f" | T1: {cur}{rr.get('t1','—')} | Win: {p.get('win_prob','?')}%"
+        )
+    lines.append("\n_Open the app for full analysis. Not financial advice._")
+    return send_whatsapp("\n".join(lines))
+
+
+def wa_penny_spikes(spikes: list) -> tuple[bool, str]:
+    if not spikes:
+        return False, "No spikes."
+    lines = [f"⚡ *Penny Spike Alert — {len(spikes)} stock(s)*"]
+    for s in spikes:
+        cur = s.get("currency", "$")
+        lines.append(
+            f"\n*{s['ticker']}*: +{s['change']:.1f}% @ {cur}{s['price']:.2f}"
+            f" ({s.get('vol_ratio',1):.1f}x vol)"
+        )
+    lines.append("\n⚠️ _High risk. Verify live price before acting._")
+    return send_whatsapp("\n".join(lines))
+
+
+def wa_sell_alert(pos: dict, monitor: dict) -> tuple[bool, str]:
+    ticker = monitor.get("ticker", "?")
+    action = monitor.get("action", "?")
+    cur    = monitor.get("currency", "$")
+    pnl    = monitor.get("pnl_usd", 0)
+    pct    = monitor.get("pnl_pct", 0)
+    msg = (
+        f"🚨 *ACTION REQUIRED*\n"
+        f"*{ticker}* — {action}\n"
+        f"Entry: {cur}{monitor.get('entry','—')} → Now: {cur}{monitor.get('current','—')}\n"
+        f"P&L: {cur}{pnl:+.2f} ({pct:+.1f}%)\n"
+        f"_Open the app to act._"
+    )
+    return send_whatsapp(msg)
