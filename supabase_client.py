@@ -6,7 +6,8 @@ Used automatically when running on Streamlit Cloud (no local aarya_config.json).
 
 import os
 
-_client = None
+_client       = None
+_admin_client = None
 
 
 def _get_url_and_key() -> tuple[str, str]:
@@ -24,6 +25,23 @@ def _get_url_and_key() -> tuple[str, str]:
     return url, key
 
 
+def _get_service_key() -> str:
+    """Return the service_role key from SUPABASE_SERVICE_KEY, falling back to SUPABASE_KEY."""
+    key = ""
+    try:
+        import streamlit as st
+        key = str(st.secrets.get("SUPABASE_SERVICE_KEY", ""))
+        if not key:
+            key = str(st.secrets.get("SUPABASE_KEY", ""))
+    except Exception:
+        pass
+    if not key:
+        key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+    if not key:
+        key = os.environ.get("SUPABASE_KEY", "")
+    return key
+
+
 def _get_client():
     global _client
     if _client is not None:
@@ -35,6 +53,23 @@ def _get_client():
         from supabase import create_client
         _client = create_client(url, key)
         return _client
+    except Exception:
+        return None
+
+
+def _get_admin_client():
+    """Return a separate Supabase client initialised with the service_role key."""
+    global _admin_client
+    if _admin_client is not None:
+        return _admin_client
+    url, _ = _get_url_and_key()
+    key = _get_service_key()
+    if not url or not key:
+        return None
+    try:
+        from supabase import create_client
+        _admin_client = create_client(url, key)
+        return _admin_client
     except Exception:
         return None
 

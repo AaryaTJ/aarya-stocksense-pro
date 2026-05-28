@@ -3,7 +3,7 @@ Aarya StockSense Pro — db.py
 Per-user database operations and admin user management (Supabase).
 """
 
-from supabase_client import _get_client
+from supabase_client import _get_client, _get_admin_client
 from config import DEFAULTS
 
 
@@ -40,7 +40,7 @@ def save_user_settings(user_id: str, data: dict) -> bool:
 
 def list_users() -> tuple[list, str]:
     """Returns (users_list, error_message). error_message is '' on success."""
-    client = _get_client()
+    client = _get_admin_client()
     if not client:
         return [], "Database not connected."
     try:
@@ -53,7 +53,7 @@ def list_users() -> tuple[list, str]:
         else:
             auth_users = list(resp)
 
-        profiles_r = client.table("user_profiles").select("*").execute()
+        profiles_r = _get_client().table("user_profiles").select("*").execute()
         profiles   = {p["id"]: p for p in (profiles_r.data or [])}
         result = []
         for u in auth_users:
@@ -75,7 +75,7 @@ def list_users() -> tuple[list, str]:
 
 
 def create_user(email: str, password: str) -> tuple[bool, str]:
-    client = _get_client()
+    client = _get_admin_client()
     if not client:
         return False, "Database not available."
     try:
@@ -121,7 +121,7 @@ def unblock_user(user_id: str) -> tuple[bool, str]:
 
 
 def delete_user(user_id: str) -> tuple[bool, str]:
-    client = _get_client()
+    client = _get_admin_client()
     if not client:
         return False, "DB error"
     try:
