@@ -1441,26 +1441,28 @@ def show_login():
 def tab_admin(current_user: dict):
     st.subheader("🔐 Admin Panel")
 
-    with st.expander("➕ Add New User", expanded=True):
-        c1, c2, c3 = st.columns([3, 2, 1])
+    # ── Add New User ──────────────────────────────────────────────────
+    st.markdown("##### ➕ Add New User")
+    with st.form("adm_create_form", clear_on_submit=True):
+        c1, c2 = st.columns(2)
         with c1:
-            new_email = st.text_input("Email address", key="adm_email", placeholder="user@email.com")
+            new_email = st.text_input("Email address", placeholder="user@email.com")
         with c2:
-            new_pw = st.text_input("Temporary password", key="adm_pw",
-                                   type="password", placeholder="Min 8 characters")
-        with c3:
-            st.markdown("<div style='padding-top:27px'></div>", unsafe_allow_html=True)
-            if st.button("Create", type="primary", use_container_width=True, key="adm_create"):
-                if new_email and new_pw:
-                    if len(new_pw) < 8:
-                        st.error("Password must be at least 8 characters.")
-                    else:
-                        ok, msg = db.create_user(new_email, new_pw)
-                        st.success(msg) if ok else st.error(msg)
-                        if ok:
-                            st.rerun()
-                else:
-                    st.error("Enter both email and password.")
+            new_pw = st.text_input("Temporary password", type="password",
+                                   placeholder="Min 8 characters")
+        submitted = st.form_submit_button("Create User", type="primary",
+                                          use_container_width=True)
+
+    if submitted:
+        if not new_email or not new_pw:
+            st.error("Enter both email and password.")
+        elif len(new_pw) < 8:
+            st.error("Password must be at least 8 characters.")
+        else:
+            ok, msg = db.create_user(new_email, new_pw)
+            st.success(msg) if ok else st.error(msg)
+            if ok:
+                st.rerun()
 
     st.markdown("---")
     st.markdown("#### All Users")
@@ -1480,43 +1482,33 @@ def tab_admin(current_user: dict):
         is_admin = u["role"] == "admin"
         blocked  = u["blocked"]
 
-        bg  = "#1a0a0a" if blocked else "#0a1525"
-        bdr = "#C0392B" if blocked else "#1a2f4a"
-        role_col = "#FFB340" if is_admin else "#4A7FA5"
-
-        c1, c2, c3, c4 = st.columns([4, 1, 1, 1])
-        with c1:
-            st.markdown(
-                f"<div style='background:{bg};border:1px solid {bdr};border-radius:8px;"
-                f"padding:10px 14px;'>"
-                f"<div style='color:#fff;font-weight:700;'>{u['email']}"
-                f"{'&nbsp;🚫 BLOCKED' if blocked else ''}"
-                f"{'&nbsp;(you)' if is_me else ''}</div>"
-                f"<div style='color:{role_col};font-size:11px;margin-top:2px;'>"
-                f"{'🔐 Admin' if is_admin else '👤 User'}"
-                f" &nbsp;·&nbsp; Joined {u['created']}"
-                f" &nbsp;·&nbsp; Last login {u['last_login']}</div>"
-                f"</div>", unsafe_allow_html=True)
-        with c2:
-            pass
-        with c3:
-            if not is_me:
-                if blocked:
-                    if st.button("Unblock", key=f"ub_{u['id']}", use_container_width=True):
-                        ok, msg = db.unblock_user(u["id"])
+        with st.container(border=True):
+            c1, c2, c3 = st.columns([5, 1, 1])
+            with c1:
+                role_icon = "🔐 Admin" if is_admin else "👤 User"
+                flags = " 🚫 **BLOCKED**" if blocked else ""
+                tag   = " *(you)*" if is_me else ""
+                st.markdown(f"**{u['email']}**{flags}{tag}")
+                st.caption(f"{role_icon}  ·  Joined {u['created']}  ·  Last login {u['last_login']}")
+            with c2:
+                if not is_me:
+                    if blocked:
+                        if st.button("Unblock", key=f"ub_{u['id']}", use_container_width=True):
+                            ok, msg = db.unblock_user(u["id"])
+                            if ok: st.rerun()
+                            else:  st.error(msg)
+                    else:
+                        if st.button("Block", key=f"bl_{u['id']}", use_container_width=True):
+                            ok, msg = db.block_user(u["id"])
+                            if ok: st.rerun()
+                            else:  st.error(msg)
+            with c3:
+                if not is_me and not is_admin:
+                    if st.button("Delete", key=f"dl_{u['id']}", use_container_width=True,
+                                 type="primary"):
+                        ok, msg = db.delete_user(u["id"])
                         if ok: st.rerun()
                         else:  st.error(msg)
-                else:
-                    if st.button("Block", key=f"bl_{u['id']}", use_container_width=True):
-                        ok, msg = db.block_user(u["id"])
-                        if ok: st.rerun()
-                        else:  st.error(msg)
-        with c4:
-            if not is_me and not is_admin:
-                if st.button("Delete", key=f"dl_{u['id']}", use_container_width=True):
-                    ok, msg = db.delete_user(u["id"])
-                    if ok: st.rerun()
-                    else:  st.error(msg)
 
 
 # ══════════════════════════════════════════════════════════════════════
