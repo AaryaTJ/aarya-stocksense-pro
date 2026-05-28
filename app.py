@@ -1466,8 +1466,11 @@ def tab_admin(current_user: dict):
     st.markdown("#### All Users")
 
     with st.spinner("Loading users…"):
-        users = db.list_users()
+        users, err = db.list_users()
 
+    if err:
+        st.error(f"Could not load users: {err}")
+        return
     if not users:
         st.info("No users found.")
         return

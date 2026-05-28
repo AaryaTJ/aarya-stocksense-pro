@@ -38,12 +38,21 @@ def save_user_settings(user_id: str, data: dict) -> bool:
 
 # ── Admin: User Management ─────────────────────────────────────────────
 
-def list_users() -> list:
+def list_users() -> tuple[list, str]:
+    """Returns (users_list, error_message). error_message is '' on success."""
     client = _get_client()
     if not client:
-        return []
+        return [], "Database not connected."
     try:
-        auth_users = client.auth.admin.list_users()
+        resp = client.auth.admin.list_users()
+        # supabase-py may return a list directly or a paginated object
+        if hasattr(resp, "users"):
+            auth_users = resp.users
+        elif isinstance(resp, list):
+            auth_users = resp
+        else:
+            auth_users = list(resp)
+
         profiles_r = client.table("user_profiles").select("*").execute()
         profiles   = {p["id"]: p for p in (profiles_r.data or [])}
         result = []
@@ -51,17 +60,18 @@ def list_users() -> list:
             pid = str(u.id)
             p   = profiles.get(pid, {})
             ll  = str(p.get("last_login") or "Never")[:10]
+            ca  = getattr(u, "created_at", None)
             result.append({
                 "id":         pid,
                 "email":      u.email or "—",
-                "created":    str(getattr(u, "created_at", ""))[:10],
+                "created":    str(ca)[:10] if ca else "—",
                 "last_login": ll,
                 "role":       p.get("role", "user"),
                 "blocked":    bool(p.get("is_blocked", False)),
             })
-        return sorted(result, key=lambda x: x["created"], reverse=True)
-    except Exception:
-        return []
+        return sorted(result, key=lambda x: x["created"], reverse=True), ""
+    except Exception as e:
+        return [], str(e)
 
 
 def create_user(email: str, password: str) -> tuple[bool, str]:
