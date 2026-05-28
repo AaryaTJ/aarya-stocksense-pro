@@ -1,0 +1,37 @@
+name: Aarya Background Monitor
+
+on:
+  schedule:
+    # 9:45 AM IST (Mon-Fri) — Indian market early session
+    - cron: '15 4 * * 1-5'
+    # 3:45 PM IST (Mon-Fri) — Indian market close / US pre-open
+    - cron: '15 10 * * 1-5'
+  workflow_dispatch:  # allow manual run from GitHub Actions tab
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --quiet \
+            yfinance pandas numpy requests \
+            google-genai lxml html5lib beautifulsoup4
+
+      - name: Run monitor
+        run: python monitor.py
+        env:
+          ALPHA_VANTAGE_KEY: ${{ secrets.ALPHA_VANTAGE_KEY }}
+          GEMINI_KEY:        ${{ secrets.GEMINI_KEY }}
+          EMAIL_SENDER:      ${{ secrets.EMAIL_SENDER }}
+          EMAIL_PASSWORD:    ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_RECIPIENTS:  ${{ secrets.EMAIL_RECIPIENTS }}

@@ -1,0 +1,27 @@
+# Credentials — never commit these
+aarya_config.json
+.streamlit/secrets.toml
+
+# User settings (stored in Supabase on cloud, locally in aarya_settings.json)
+aarya_settings.json
+
+# Logs
+monitor.log
+test_run.log
+build_log.txt
+
+# Build artifacts (desktop .exe)
+dist/
+build/
+*.spec
+aarya_debug.spec
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# Desktop shortcuts
+*.lnk
+AaryaStockSensePro.zip

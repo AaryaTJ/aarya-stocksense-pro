@@ -1,0 +1,67 @@
+"""
+Aarya StockSense Pro — supabase_client.py
+Cloud settings persistence via Supabase (free tier).
+Used automatically when running on Streamlit Cloud (no local aarya_config.json).
+"""
+
+import os
+
+_client = None
+
+
+def _get_url_and_key() -> tuple[str, str]:
+    url = key = ""
+    try:
+        import streamlit as st
+        url = str(st.secrets.get("SUPABASE_URL", ""))
+        key = str(st.secrets.get("SUPABASE_KEY", ""))
+    except Exception:
+        pass
+    if not url:
+        url = os.environ.get("SUPABASE_URL", "")
+    if not key:
+        key = os.environ.get("SUPABASE_KEY", "")
+    return url, key
+
+
+def _get_client():
+    global _client
+    if _client is not None:
+        return _client
+    url, key = _get_url_and_key()
+    if not url or not key:
+        return None
+    try:
+        from supabase import create_client
+        _client = create_client(url, key)
+        return _client
+    except Exception:
+        return None
+
+
+def is_available() -> bool:
+    return _get_client() is not None
+
+
+def load_settings_cloud(user_id: str = "default") -> dict | None:
+    client = _get_client()
+    if not client:
+        return None
+    try:
+        result = client.table("settings").select("data").eq("id", user_id).execute()
+        if result.data:
+            return result.data[0]["data"]
+    except Exception:
+        pass
+    return None
+
+
+def save_settings_cloud(data: dict, user_id: str = "default") -> bool:
+    client = _get_client()
+    if not client:
+        return False
+    try:
+        client.table("settings").upsert({"id": user_id, "data": data}).execute()
+        return True
+    except Exception:
+        return False
