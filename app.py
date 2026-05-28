@@ -16,6 +16,8 @@ importlib.reload(eng)
 from config import (FUND_CATALOGUE, MARKET_CONFIGS, FOCUS_MODES,
                     load_settings, save_settings, get_watchlist, save_custom_watchlist)
 import notifier
+import auth
+import db
 
 st.set_page_config(page_title="Aarya StockSense Pro", page_icon="📈",
                    layout="wide", initial_sidebar_state="auto")
@@ -280,7 +282,7 @@ def sidebar(cfg: dict):
                                     value=cfg.get("refresh",300),
                                     format_func=lambda x: "Off" if x==0 else f"{x//60}m")
         cfg.update({"portfolio": portfolio, "risk_pct": risk_pct, "refresh": refresh})
-        save_settings(cfg)
+        _save(cfg)
         if refresh > 0:
             st_autorefresh(interval=refresh*1000, key="arf")
 
@@ -299,6 +301,20 @@ def sidebar(cfg: dict):
             pass
         card(f"<div style='font-size:10px;color:#1a2f4a;text-align:center;margin-top:8px;'>"
              f"Hours: {mc.get('hours','—')}</div>")
+
+        # ── User info + logout ─────────────────────────────────────
+        _u = st.session_state.get("_aarya_auth")
+        if _u:
+            st.markdown("<hr style='border-color:#1a2f4a;margin:10px 0 8px;'>",
+                        unsafe_allow_html=True)
+            role_label = "🔐 Admin" if _u.get("is_admin") else "👤 User"
+            card(f"<div style='text-align:center;padding:4px 0;'>"
+                 f"<div style='color:#4A7FA5;font-size:10px;'>{role_label}</div>"
+                 f"<div style='color:#C9D6E3;font-size:11px;font-weight:700;margin-top:2px;'>"
+                 f"{_u['email']}</div></div>")
+            if st.button("🚪 Logout", use_container_width=True, key="sidebar_logout"):
+                auth.logout()
+
     return cfg, market
 
 
@@ -1062,7 +1078,7 @@ def tab_portfolio(cfg, market):
                                    "stop":nsl if nsl>0 else ne*0.97,
                                    "date":datetime.now().strftime("%Y-%m-%d")})
                 cfg["positions"] = positions
-                save_settings(cfg)
+                _save(cfg)
                 st.success(f"✅ {nt} logged.")
                 st.rerun()
 
@@ -1128,7 +1144,7 @@ def tab_portfolio(cfg, market):
 
     if to_remove:
         cfg["positions"] = [p for i,p in enumerate(positions) if i not in to_remove]
-        save_settings(cfg); st.rerun()
+        _save(cfg); st.rerun()
 
     st.markdown("---")
     pc = "#1D9E75" if total_pnl >= 0 else "#FF4D6A"
@@ -1200,7 +1216,7 @@ def tab_settings(cfg, market):
         if st.button("💾 Save Risk Settings", type="primary"):
             cfg["time_stop"]     = time_stop
             cfg["max_positions"] = max_pos
-            save_settings(cfg)
+            _save(cfg)
             st.success("✅ Risk settings saved.")
 
         st.markdown("---")
@@ -1366,20 +1382,168 @@ def tab_settings(cfg, market):
 
 
 # ══════════════════════════════════════════════════════════════════════
+#  SETTINGS SAVE HELPER (routes to DB when logged in, file otherwise)
+# ══════════════════════════════════════════════════════════════════════
+def _save(cfg: dict):
+    user = st.session_state.get("_aarya_auth")
+    if user:
+        db.save_user_settings(user["id"], cfg)
+    else:
+        _save(cfg)
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  LOGIN SCREEN
+# ══════════════════════════════════════════════════════════════════════
+def show_login():
+    st.markdown("""<style>
+    .block-container{max-width:420px!important;padding-top:6vh!important}
+    [data-testid="stForm"]{background:#0a1525;border:1px solid #1a2f4a;
+        border-radius:16px;padding:32px 28px}
+    </style>""", unsafe_allow_html=True)
+
+    _ico = os.path.join(os.path.dirname(__file__), "aarya_icon.png")
+    if os.path.exists(_ico):
+        _b64 = base64.b64encode(open(_ico, "rb").read()).decode()
+        st.markdown(f"<div style='text-align:center;margin-bottom:4px;'>"
+                    f"<img src='data:image/png;base64,{_b64}' style='width:64px;height:64px;border-radius:12px;'>"
+                    f"</div>", unsafe_allow_html=True)
+
+    st.markdown("<div style='text-align:center;margin-bottom:24px;'>"
+                "<div style='font-size:28px;font-weight:900;color:#fff;'>Aarya StockSense Pro</div>"
+                "<div style='font-size:11px;color:#1D9E75;font-weight:700;letter-spacing:3px;margin-top:4px;'>SECURE LOGIN</div>"
+                "</div>", unsafe_allow_html=True)
+
+    with st.form("login_form"):
+        email    = st.text_input("Email", placeholder="your@email.com")
+        password = st.text_input("Password", type="password", placeholder="••••••••")
+        submitted = st.form_submit_button("Login", use_container_width=True, type="primary")
+
+    if submitted:
+        if not email or not password:
+            st.error("Enter your email and password.")
+        else:
+            with st.spinner("Signing in…"):
+                user, err = auth.login(email, password)
+            if err:
+                st.error(err)
+            else:
+                st.rerun()
+
+    st.markdown("<div style='text-align:center;margin-top:20px;color:#4A7FA5;font-size:12px;'>"
+                "Access is by invitation only.<br>Contact the admin to request an account.</div>",
+                unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  ADMIN PANEL
+# ══════════════════════════════════════════════════════════════════════
+def tab_admin(current_user: dict):
+    st.subheader("🔐 Admin Panel")
+
+    with st.expander("➕ Add New User", expanded=True):
+        c1, c2, c3 = st.columns([3, 2, 1])
+        with c1:
+            new_email = st.text_input("Email address", key="adm_email", placeholder="user@email.com")
+        with c2:
+            new_pw = st.text_input("Temporary password", key="adm_pw",
+                                   type="password", placeholder="Min 8 characters")
+        with c3:
+            st.markdown("<div style='padding-top:27px'></div>", unsafe_allow_html=True)
+            if st.button("Create", type="primary", use_container_width=True, key="adm_create"):
+                if new_email and new_pw:
+                    if len(new_pw) < 8:
+                        st.error("Password must be at least 8 characters.")
+                    else:
+                        ok, msg = db.create_user(new_email, new_pw)
+                        st.success(msg) if ok else st.error(msg)
+                        if ok:
+                            st.rerun()
+                else:
+                    st.error("Enter both email and password.")
+
+    st.markdown("---")
+    st.markdown("#### All Users")
+
+    with st.spinner("Loading users…"):
+        users = db.list_users()
+
+    if not users:
+        st.info("No users found.")
+        return
+
+    for u in users:
+        is_me    = u["id"] == current_user["id"]
+        is_admin = u["role"] == "admin"
+        blocked  = u["blocked"]
+
+        bg  = "#1a0a0a" if blocked else "#0a1525"
+        bdr = "#C0392B" if blocked else "#1a2f4a"
+        role_col = "#FFB340" if is_admin else "#4A7FA5"
+
+        c1, c2, c3, c4 = st.columns([4, 1, 1, 1])
+        with c1:
+            st.markdown(
+                f"<div style='background:{bg};border:1px solid {bdr};border-radius:8px;"
+                f"padding:10px 14px;'>"
+                f"<div style='color:#fff;font-weight:700;'>{u['email']}"
+                f"{'&nbsp;🚫 BLOCKED' if blocked else ''}"
+                f"{'&nbsp;(you)' if is_me else ''}</div>"
+                f"<div style='color:{role_col};font-size:11px;margin-top:2px;'>"
+                f"{'🔐 Admin' if is_admin else '👤 User'}"
+                f" &nbsp;·&nbsp; Joined {u['created']}"
+                f" &nbsp;·&nbsp; Last login {u['last_login']}</div>"
+                f"</div>", unsafe_allow_html=True)
+        with c2:
+            pass
+        with c3:
+            if not is_me:
+                if blocked:
+                    if st.button("Unblock", key=f"ub_{u['id']}", use_container_width=True):
+                        ok, msg = db.unblock_user(u["id"])
+                        if ok: st.rerun()
+                        else:  st.error(msg)
+                else:
+                    if st.button("Block", key=f"bl_{u['id']}", use_container_width=True):
+                        ok, msg = db.block_user(u["id"])
+                        if ok: st.rerun()
+                        else:  st.error(msg)
+        with c4:
+            if not is_me and not is_admin:
+                if st.button("Delete", key=f"dl_{u['id']}", use_container_width=True):
+                    ok, msg = db.delete_user(u["id"])
+                    if ok: st.rerun()
+                    else:  st.error(msg)
+
+
+# ══════════════════════════════════════════════════════════════════════
 #  MAIN
 # ══════════════════════════════════════════════════════════════════════
 def main():
     css()
-    cfg = load_settings()
+
+    user = auth.get_current_user()
+    if not user:
+        show_login()
+        return
+
+    cfg = db.get_user_settings(user["id"])
     cfg, market = sidebar(cfg)
-    tabs = st.tabs(["📈 Today's Picks", "🤖 AI Copilot", "📊 Funds",
-                    "🔍 Stock Checker", "💼 Portfolio", "⚙️ Settings"])
+
+    tab_names = ["📈 Today's Picks", "🤖 AI Copilot", "📊 Funds",
+                 "🔍 Stock Checker", "💼 Portfolio", "⚙️ Settings"]
+    if user.get("is_admin"):
+        tab_names.append("🔐 Admin")
+
+    tabs = st.tabs(tab_names)
     with tabs[0]: tab_picks(cfg, market)
     with tabs[1]: tab_copilot(cfg, market)
     with tabs[2]: tab_funds(cfg, market)
     with tabs[3]: tab_checker(cfg, market)
     with tabs[4]: tab_portfolio(cfg, market)
     with tabs[5]: tab_settings(cfg, market)
+    if user.get("is_admin") and len(tabs) > 6:
+        with tabs[6]: tab_admin(user)
 
 
 main()
