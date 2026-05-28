@@ -18,7 +18,7 @@ from config import (FUND_CATALOGUE, MARKET_CONFIGS, FOCUS_MODES,
 import notifier
 
 st.set_page_config(page_title="Aarya StockSense Pro", page_icon="📈",
-                   layout="wide", initial_sidebar_state="expanded")
+                   layout="wide", initial_sidebar_state="auto")
 
 # ── THEME ─────────────────────────────────────────────────────────────
 def css():
@@ -46,6 +46,16 @@ def css():
     [data-testid="stDataFrame"]{border:1px solid #1a2f4a;border-radius:8px}
     hr{border-color:#1a2f4a!important}
     .stExpander{border:1px solid #1a2f4a!important;border-radius:8px!important;background:#0a1525!important}
+    @media screen and (max-width:640px){
+        [data-testid="column"]{min-width:100%!important;margin-bottom:8px}
+        [data-testid="stDataFrame"]{max-width:calc(100vw - 2rem)!important;overflow-x:auto!important}
+        [data-testid="stMetric"]{padding:8px 10px!important}
+        h1{font-size:1.3rem!important}
+        h2,h3{font-size:1.05rem!important}
+        [data-baseweb="tab"]{font-size:11px!important;padding:6px 8px!important}
+        [data-testid="stAppViewContainer"] > section:first-child{padding:0.5rem!important}
+        .block-container{padding:0.5rem 0.75rem!important;max-width:100vw!important}
+    }
     </style>""", unsafe_allow_html=True)
 
 # ── HELPERS ───────────────────────────────────────────────────────────
