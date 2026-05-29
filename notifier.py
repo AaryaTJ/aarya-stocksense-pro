@@ -570,14 +570,15 @@ def _get_tg_creds() -> tuple[str, str]:
     return token.strip(), chat_id.strip()
 
 
-def send_telegram(message: str) -> tuple[bool, str]:
-    token, chat_id = _get_tg_creds()
-    if not token or not chat_id:
+def send_telegram(message: str, chat_id: str = "") -> tuple[bool, str]:
+    token, default_cid = _get_tg_creds()
+    cid = chat_id.strip() or default_cid
+    if not token or not cid:
         return False, "Telegram not configured."
     try:
         r = requests.post(
             f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat_id, "text": message, "parse_mode": "Markdown"},
+            json={"chat_id": cid, "text": message, "parse_mode": "Markdown"},
             timeout=15,
         )
         if r.status_code == 200 and r.json().get("ok"):
@@ -587,7 +588,7 @@ def send_telegram(message: str) -> tuple[bool, str]:
         return False, str(e)
 
 
-def tg_daily_top3(picks: list) -> tuple[bool, str]:
+def tg_daily_top3(picks: list, chat_id: str = "") -> tuple[bool, str]:
     if not picks:
         return False, "No picks."
     lines = ["📈 *Aarya Top Picks*"]
@@ -600,10 +601,10 @@ def tg_daily_top3(picks: list) -> tuple[bool, str]:
             f" | T1: {cur}{rr.get('t1','—')} | Win: {p.get('win_prob','?')}%"
         )
     lines.append("\n_Open the app for full analysis\\. Not financial advice\\._")
-    return send_telegram("\n".join(lines))
+    return send_telegram("\n".join(lines), chat_id)
 
 
-def tg_penny_spikes(spikes: list) -> tuple[bool, str]:
+def tg_penny_spikes(spikes: list, chat_id: str = "") -> tuple[bool, str]:
     if not spikes:
         return False, "No spikes."
     lines = [f"⚡ *Penny Spike Alert — {len(spikes)} stock(s)*"]
@@ -614,10 +615,10 @@ def tg_penny_spikes(spikes: list) -> tuple[bool, str]:
             f" \\({s.get('vol_ratio',1):.1f}x vol\\)"
         )
     lines.append("\n⚠️ _High risk\\. Verify live price before acting\\._")
-    return send_telegram("\n".join(lines))
+    return send_telegram("\n".join(lines), chat_id)
 
 
-def tg_sell_alert(pos: dict, monitor: dict) -> tuple[bool, str]:
+def tg_sell_alert(pos: dict, monitor: dict, chat_id: str = "") -> tuple[bool, str]:
     ticker = monitor.get("ticker", "?")
     action = monitor.get("action", "?")
     cur    = monitor.get("currency", "$")
@@ -630,4 +631,4 @@ def tg_sell_alert(pos: dict, monitor: dict) -> tuple[bool, str]:
         f"P&L: {cur}{pnl:+.2f} \\({pct:+.1f}%\\)\n"
         f"_Open the app to act\\._"
     )
-    return send_telegram(msg)
+    return send_telegram(msg, chat_id)

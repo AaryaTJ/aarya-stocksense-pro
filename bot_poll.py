@@ -137,7 +137,7 @@ def handle_stock(ticker: str, chat_id: str, mc=None):
             regime = {"pass": True, "label": "Unknown",
                       "price": "—", "sma200": "—", "pct_above": 0.0}
 
-        result = eng.analyze_ticker(ticker, mc, regime, 10000, 1.0)
+        result = eng.analyze_ticker(ticker, mc, regime.get("_df"), 10000, 1.0)
 
         # Try other market if not found
         if result is None:
@@ -148,7 +148,7 @@ def handle_stock(ticker: str, chat_id: str, mc=None):
                 regime2 = eng.check_regime(alt)
             except Exception:
                 regime2 = regime
-            result = eng.analyze_ticker(ticker, alt, regime2, 10000, 1.0)
+            result = eng.analyze_ticker(ticker, alt, regime2.get("_df"), 10000, 1.0)
             if result:
                 mc = alt
 
@@ -207,7 +207,7 @@ def handle_picks(chat_id: str):
                       "price": "—", "sma200": "—", "pct_above": 0.0}
         for t in tickers:
             try:
-                r = eng.analyze_ticker(t, mc, regime, 10000, 1.0)
+                r = eng.analyze_ticker(t, mc, regime.get("_df"), 10000, 1.0)
                 if r and r.get("price", 999) >= cutoff and \
                         r["signal"] in ("BUY TODAY", "PREPARE TO BUY"):
                     r["currency"]     = currency

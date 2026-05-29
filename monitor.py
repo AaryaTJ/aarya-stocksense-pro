@@ -32,6 +32,7 @@ sys.path.insert(0, BASE_DIR)
 
 import engine as eng
 import notifier
+import db
 from config import MARKET_CONFIGS
 
 # ── Logging ────────────────────────────────────────────────────────────
@@ -97,7 +98,7 @@ def check_buy_picks(cfg: dict) -> list:
 
         for ticker in tickers:
             try:
-                r = eng.analyze_ticker(ticker, mc, regime, cfg["portfolio"], cfg["risk_pct"])
+                r = eng.analyze_ticker(ticker, mc, regime.get("_df"), cfg["portfolio"], cfg["risk_pct"])
                 if r is None:
                     continue
                 # Skip penny stocks for the daily top-3
@@ -223,17 +224,26 @@ def run():
     except Exception as e:
         log.error(f"Buy-picks scan failed: {e}")
 
+    # Collect all Telegram chat IDs from website registrations + env fallback
+    tg_chat_ids = []
+    try:
+        tg_chat_ids = db.get_all_telegram_chat_ids()
+        log.info(f"Telegram recipients: {len(tg_chat_ids)}")
+    except Exception as e:
+        log.warning(f"Could not load Telegram chat IDs: {e}")
+
     if picks:
         try:
             ok, msg = notifier.send_daily_top3_email(picks)
             log.info(f"Daily top-3 email: {'✅ ' + msg if ok else '❌ ' + msg}")
         except Exception as e:
             log.error(f"Daily top-3 email error: {e}")
-        try:
-            ok, msg = notifier.tg_daily_top3(picks)
-            log.info(f"Daily top-3 Telegram: {'✅ ' + msg if ok else '❌ ' + msg}")
-        except Exception as e:
-            log.error(f"Daily top-3 Telegram error: {e}")
+        for cid in tg_chat_ids:
+            try:
+                ok, msg = notifier.tg_daily_top3(picks, cid)
+                log.info(f"Daily top-3 Telegram → {cid}: {'✅' if ok else '❌ ' + msg}")
+            except Exception as e:
+                log.error(f"Daily top-3 Telegram error ({cid}): {e}")
     else:
         log.info("No strong buy picks found today — daily email skipped.")
 
@@ -251,11 +261,12 @@ def run():
             log.info(f"Penny spike email: {'✅ ' + msg if ok else '❌ ' + msg}")
         except Exception as e:
             log.error(f"Penny spike email error: {e}")
-        try:
-            ok, msg = notifier.tg_penny_spikes(spikes)
-            log.info(f"Penny spike Telegram: {'✅ ' + msg if ok else '❌ ' + msg}")
-        except Exception as e:
-            log.error(f"Penny spike Telegram error: {e}")
+        for cid in tg_chat_ids:
+            try:
+                ok, msg = notifier.tg_penny_spikes(spikes, cid)
+                log.info(f"Penny spike Telegram → {cid}: {'✅' if ok else '❌ ' + msg}")
+            except Exception as e:
+                log.error(f"Penny spike Telegram error ({cid}): {e}")
     else:
         log.info("No penny spikes today — penny email skipped.")
 
@@ -274,11 +285,12 @@ def run():
                 log.info(f"Sell alert for {pos.get('ticker','?')}: {'✅ ' + msg if ok else '❌ ' + msg}")
             except Exception as e:
                 log.error(f"Sell alert email error: {e}")
-            try:
-                ok, msg = notifier.tg_sell_alert(pos, m)
-                log.info(f"Sell alert Telegram for {pos.get('ticker','?')}: {'✅ ' + msg if ok else '❌ ' + msg}")
-            except Exception as e:
-                log.error(f"Sell alert Telegram error: {e}")
+            for cid in tg_chat_ids:
+                try:
+                    ok, msg = notifier.tg_sell_alert(pos, m, cid)
+                    log.info(f"Sell alert Telegram → {cid}: {'✅' if ok else '❌ ' + msg}")
+                except Exception as e:
+                    log.error(f"Sell alert Telegram error ({cid}): {e}")
     else:
         log.info("All portfolio positions are healthy — no sell alerts.")
 

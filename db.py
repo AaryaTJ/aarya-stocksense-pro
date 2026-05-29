@@ -162,3 +162,53 @@ def delete_user(user_id: str) -> tuple[bool, str]:
         return False, r.json().get("message", r.text)
     except Exception as e:
         return False, str(e)
+
+
+# ── Telegram Notifications ─────────────────────────────────────────────
+
+def save_telegram_chat_id(user_id: str, chat_id: str) -> tuple[bool, str]:
+    settings = get_user_settings(user_id)
+    settings["telegram_chat_id"] = chat_id.strip()
+    ok = save_user_settings(user_id, settings)
+    return ok, "Telegram Chat ID saved." if ok else "Failed to save."
+
+
+def get_all_telegram_chat_ids() -> list[str]:
+    """Returns all configured Telegram chat IDs across all users (for monitor.py)."""
+    import os
+    url = key = ""
+    try:
+        import streamlit as st
+        url = str(st.secrets.get("SUPABASE_URL", ""))
+        key = str(st.secrets.get("SUPABASE_SERVICE_KEY", "")
+                  or st.secrets.get("SUPABASE_KEY", ""))
+    except Exception:
+        pass
+    if not url:
+        url = os.environ.get("SUPABASE_URL", "")
+    if not key:
+        key = os.environ.get("SUPABASE_SERVICE_KEY",
+                             os.environ.get("SUPABASE_KEY", ""))
+
+    chat_ids: list[str] = []
+    if url and key:
+        try:
+            headers = {"apikey": key, "Authorization": f"Bearer {key}"}
+            r = requests.get(
+                f"{url}/rest/v1/user_settings?select=data",
+                headers=headers, timeout=10,
+            )
+            if r.status_code == 200:
+                for row in r.json():
+                    cid = str(row.get("data", {}).get("telegram_chat_id", "")).strip()
+                    if cid and cid not in chat_ids:
+                        chat_ids.append(cid)
+        except Exception:
+            pass
+
+    # Fallback: env var (GitHub Actions secret)
+    env_cid = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    if env_cid and env_cid not in chat_ids:
+        chat_ids.append(env_cid)
+
+    return chat_ids

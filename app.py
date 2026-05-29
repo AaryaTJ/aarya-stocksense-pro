@@ -1354,8 +1354,52 @@ def tab_settings(cfg, market):
                 st.success("✅ Gemini key saved.")
 
         st.markdown("---")
+        st.markdown("### 📱 Telegram Notifications")
+        st.caption("Get stock alerts directly on your phone via Telegram.")
+
+        with st.expander("How to get your Telegram Chat ID", expanded=False):
+            st.markdown(
+                "1. Open Telegram on your phone\n"
+                "2. Search for **@userinfobot** and tap it\n"
+                "3. Send `/start` — it instantly replies with your **Chat ID** (a number like `987654321`)\n"
+                "4. Paste that number below and click Save\n\n"
+                "Once saved, alerts (buy picks, penny spikes, sell signals) will arrive on your Telegram automatically."
+            )
+
+        _tg_user = st.session_state.get("_aarya_auth")
+        _tg_user_id = _tg_user["id"] if _tg_user else None
+        _current_chat_id = db.get_user_settings(_tg_user_id).get("telegram_chat_id", "") if _tg_user_id else ""
+
+        tg_c1, tg_c2 = st.columns([3, 1])
+        with tg_c1:
+            new_tg_id = st.text_input(
+                "Your Telegram Chat ID",
+                value=_current_chat_id,
+                placeholder="e.g. 987654321",
+                label_visibility="collapsed",
+            )
+        with tg_c2:
+            if st.button("💾 Save", key="save_tg_id", type="primary", use_container_width=True):
+                if _tg_user_id and new_tg_id.strip().lstrip("-").isdigit():
+                    ok, msg = db.save_telegram_chat_id(_tg_user_id, new_tg_id.strip())
+                    if ok:
+                        st.success(f"✅ {msg}")
+                        st.rerun()
+                    else:
+                        st.error(f"❌ {msg}")
+                elif not new_tg_id.strip():
+                    st.warning("Enter your Chat ID first.")
+                else:
+                    st.error("Chat ID must be a number. Get it from @userinfobot on Telegram.")
+
+        if _current_chat_id:
+            st.success(f"✅ Telegram alerts active — Chat ID: `{_current_chat_id}`")
+        else:
+            st.info("No Telegram Chat ID saved yet.")
+
+        st.markdown("---")
         st.markdown("#### 🧪 Test Your Setup")
-        tc1, tc2 = st.columns(2)
+        tc1, tc2, tc3 = st.columns(3)
         with tc1:
             if st.button("📧 Send Test Email", type="primary", use_container_width=True):
                 with st.spinner("Sending…"):
@@ -1368,6 +1412,24 @@ def tab_settings(cfg, market):
                 else:
                     st.error(f"❌ {msg}")
         with tc2:
+            if st.button("📱 Test Telegram", use_container_width=True):
+                _test_cid = _current_chat_id
+                if not _test_cid:
+                    st.warning("Save your Telegram Chat ID above first.")
+                else:
+                    with st.spinner("Sending…"):
+                        try:
+                            ok, msg = notifier.send_telegram(
+                                "✅ *Aarya StockSense* — Telegram alerts are working\\! You will receive buy picks, penny spike alerts and sell signals here automatically\\.",
+                                _test_cid,
+                            )
+                        except Exception as _tte:
+                            ok, msg = False, str(_tte)
+                    if ok:
+                        st.success("✅ Check your Telegram!")
+                    else:
+                        st.error(f"❌ {msg}")
+        with tc3:
             if st.button("🤖 Test Gemini", use_container_width=True):
                 with st.spinner("Asking Gemini…"):
                     try:
