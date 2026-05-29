@@ -372,6 +372,106 @@ def send_test_email() -> tuple[bool, str]:
     return send_alert("[Aarya] Test Email — Alerts are working! ✅", html)
 
 
+def send_market_update_email(
+    session: str,           # "Morning" or "Afternoon"
+    regimes: dict,          # {"us": regime_dict, "india": regime_dict}
+    picks: list,            # BUY TODAY / PREPARE TO BUY picks
+    watches: list,          # WATCH picks (shown when no strong picks)
+) -> tuple[bool, str]:
+    """Always-send daily update email for morning (9 AM IST) and afternoon (3 PM IST)."""
+
+    row = lambda lbl, val, vc="#fff": (
+        f"<tr><td style='padding:5px 10px;background:#121e30;border:1px solid #1a2f4a;"
+        f"color:#4A7FA5;font-size:11px;width:35%;'>{lbl}</td>"
+        f"<td style='padding:5px 10px;background:#121e30;border:1px solid #1a2f4a;"
+        f"color:{vc};font-weight:700;'>{val}</td></tr>"
+    )
+
+    icon = "🌅" if session == "Morning" else "🕒"
+    time_str = datetime.now().strftime("%d %b %Y, %H:%M UTC")
+
+    # ── Market regime section ──────────────────────────────────────────
+    regime_html = ""
+    for mkt_name, r in regimes.items():
+        bull  = r.get("pass", True)
+        label = r.get("label", "Unknown")
+        price = r.get("price", "—")
+        pct   = r.get("pct_above", 0.0)
+        col   = "#00C48C" if bull else "#FF4D6A"
+        flag  = "🇺🇸" if mkt_name == "us" else "🇮🇳"
+        cur   = "$" if mkt_name == "us" else "₹"
+        bm    = "SPY" if mkt_name == "us" else "Nifty 50"
+        regime_html += (
+            f"<div style='display:inline-block;background:#121e30;border:1px solid {col};"
+            f"border-radius:8px;padding:10px 16px;margin:4px 8px 4px 0;min-width:200px;'>"
+            f"<div style='color:#4A7FA5;font-size:10px;'>{flag} {bm}</div>"
+            f"<div style='color:{col};font-weight:900;font-size:14px;'>{label.split('—')[0].strip()}</div>"
+            f"<div style='color:#C9D6E3;font-size:12px;'>{cur}{price} &nbsp;·&nbsp; "
+            f"<span style='color:{col};'>{pct:+.1f}% vs 200 SMA</span></div>"
+            f"</div>"
+        )
+
+    # ── Picks section ─────────────────────────────────────────────────
+    if picks:
+        picks_html = f"<div style='color:#00C48C;font-weight:700;font-size:13px;margin:14px 0 8px;'>📈 {len(picks)} Strong Setup(s) Found</div>"
+        for i, p in enumerate(picks[:3], 1):
+            cur = p.get("currency", "$")
+            sig = p.get("signal", "?")
+            rr  = p.get("rr", {})
+            col = "#00C48C" if sig == "BUY TODAY" else "#1D9E75"
+            picks_html += (
+                f"<div style='background:#121e30;border-left:4px solid {col};"
+                f"border-radius:8px;padding:10px 14px;margin-bottom:10px;'>"
+                f"<span style='font-size:16px;font-weight:900;color:#fff;'>#{i} {p.get('ticker','?')}</span>"
+                f"&nbsp;&nbsp;<span style='background:{col};color:#050d15;font-size:10px;"
+                f"font-weight:700;padding:2px 8px;border-radius:10px;'>{sig}</span>"
+                f"<table style='width:100%;border-collapse:collapse;margin-top:8px;'>"
+                + row("Entry", f"{cur}{p.get('entry','—')}")
+                + row("Stop",  f"{cur}{p.get('stop','—')}", "#FF4D6A")
+                + row("T1",    f"{cur}{rr.get('t1','—')}",  "#FFB340")
+                + row("Win %", f"{p.get('win_prob','?')}%",  col)
+                + f"</table></div>"
+            )
+    elif watches:
+        picks_html = (
+            f"<div style='color:#FFB340;font-weight:700;font-size:13px;margin:14px 0 8px;'>"
+            f"👀 No strong buys — {len(watches)} stock(s) to watch</div>"
+        )
+        for p in watches[:3]:
+            cur = p.get("currency", "$")
+            picks_html += (
+                f"<div style='background:#121e30;border-left:4px solid #FFB340;"
+                f"border-radius:8px;padding:8px 14px;margin-bottom:8px;'>"
+                f"<span style='font-weight:700;color:#fff;'>{p.get('ticker','?')}</span>"
+                f"&nbsp;<span style='color:#FFB340;font-size:11px;'>WATCH</span>"
+                f"&nbsp;·&nbsp;<span style='color:#4A7FA5;font-size:11px;'>"
+                f"Minervini {p.get('minervini_score','?')}/8 · Win {p.get('win_prob','?')}%"
+                f" · {cur}{p.get('price','—')}</span></div>"
+            )
+    else:
+        picks_html = (
+            f"<div style='background:#121e30;border:1px solid #1a2f4a;border-radius:8px;"
+            f"padding:14px;color:#4A7FA5;font-size:13px;margin-top:14px;'>"
+            f"🔇 Market is quiet today — no actionable setups found in either US or India. "
+            f"This is normal — the engine only signals when conditions are genuinely met. "
+            f"Stay patient.</div>"
+        )
+
+    body = (
+        f"<div style='color:#4A7FA5;font-size:11px;margin-bottom:12px;'>{time_str}</div>"
+        f"<div style='margin-bottom:12px;'>{regime_html}</div>"
+        + picks_html +
+        f"<div style='margin-top:16px;padding:10px 14px;background:#121e30;"
+        f"border:1px solid #1a2f4a;border-radius:6px;color:#4A7FA5;font-size:11px;'>"
+        f"Scans run 6× daily on weekdays. Open the app for full analysis. Not financial advice.</div>"
+    )
+
+    subj_emoji = "📈" if picks else ("👀" if watches else "🔇")
+    subject    = f"[Aarya] {icon} {session} Market Update — {subj_emoji} {'Buys found' if picks else ('Watching ' + str(len(watches)) if watches else 'Quiet market')}"
+    html = _wrap(f"{icon} {session} Market Update", "#1D9E75" if picks else "#FFB340", body)
+    return send_alert(subject, html)
+
+
 # ── GEMINI AI ──────────────────────────────────────────────────────────
 
 def _gemini_client():

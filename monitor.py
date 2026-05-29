@@ -68,23 +68,27 @@ def _score(r: dict) -> float:
 
 # ── 1. Daily Top-3 Buy Picks ───────────────────────────────────────────
 
-def check_buy_picks(cfg: dict) -> list:
+def check_buy_picks(cfg: dict) -> tuple[list, list, dict]:
     """
-    Scan US + India watchlists. Return up to 3 best non-penny setups
-    sorted by composite score (win_prob + Minervini + RS).
+    Scan US + India watchlists.
+    Returns (strong_picks[:3], watch_picks[:3], regimes)
+    strong_picks = BUY TODAY / PREPARE TO BUY
+    watch_picks  = WATCH signals (shown in daily update when no strong picks)
+    regimes      = {"us": regime_dict, "india": regime_dict}
     """
     markets_to_scan = [
-        ("🇺🇸 US Stocks",  "$",  10.0),
-        ("🇮🇳 India NSE",  "₹",  500.0),
+        ("🇺🇸 US Stocks", "us",  "$",  10.0),
+        ("🇮🇳 India NSE", "india", "₹", 500.0),
     ]
-    all_picks = []
+    strong_picks = []
+    watch_picks  = []
+    regimes      = {}
 
-    for market_name, currency, penny_cutoff in markets_to_scan:
+    for market_name, mkt_key, currency, penny_cutoff in markets_to_scan:
         mc = MARKET_CONFIGS.get(market_name)
         if not mc:
             continue
 
-        # Use growth + blue_chips list (max 20 tickers to stay within free API limits)
         tickers = list(dict.fromkeys(
             mc.get("growth", []) + mc.get("blue_chips", [])
         ))[:20]
@@ -96,25 +100,28 @@ def check_buy_picks(cfg: dict) -> list:
             log.warning(f"{market_name} regime check failed: {e}")
             regime = {"pass": True, "label": "Unknown", "price": "—", "sma200": "—", "pct_above": 0.0}
 
+        regimes[mkt_key] = regime
+
         for ticker in tickers:
             try:
                 r = eng.analyze_ticker(ticker, mc, regime.get("_df"), cfg["portfolio"], cfg["risk_pct"])
                 if r is None:
                     continue
-                # Skip penny stocks for the daily top-3
                 if r.get("price", 999) < penny_cutoff:
                     continue
+                r["currency"]     = currency
+                r["market_label"] = market_name
                 if r["signal"] in ("BUY TODAY", "PREPARE TO BUY"):
-                    r["currency"]     = currency
-                    r["market_label"] = market_name
-                    all_picks.append(r)
+                    strong_picks.append(r)
+                elif r["signal"] == "WATCH":
+                    watch_picks.append(r)
             except Exception as e:
                 log.debug(f"{ticker} analysis error: {e}")
 
-    all_picks.sort(key=_score, reverse=True)
-    log.info(f"Buy picks found: {len(all_picks)} total — top 3: "
-             f"{[p['ticker'] for p in all_picks[:3]]}")
-    return all_picks[:3]
+    strong_picks.sort(key=_score, reverse=True)
+    watch_picks.sort(key=_score, reverse=True)
+    log.info(f"Strong picks: {len(strong_picks)} | Watch: {len(watch_picks)}")
+    return strong_picks[:3], watch_picks[:3], regimes
 
 
 # ── 2. Penny Spike Scanner ─────────────────────────────────────────────
@@ -216,11 +223,22 @@ def run():
 
     cfg = load_settings()
 
+    # Determine if this is a forced daily-update run (9 AM or 3 PM IST)
+    # 9 AM IST = 03:30 UTC  →  UTC hour 3
+    # 3 PM IST = 09:30 UTC  →  UTC hour 9
+    utc_hour = datetime.utcnow().hour
+    is_morning   = utc_hour == 3
+    is_afternoon = utc_hour == 9
+    force_update = is_morning or is_afternoon
+    session_name = "Morning" if is_morning else ("Afternoon" if is_afternoon else "")
+    log.info(f"UTC hour: {utc_hour} | Force update: {force_update} ({session_name})")
+
     # ── Step 1: Top-3 buy picks ────────────────────────────────────────
     log.info("Step 1/3: Scanning for top buy picks…")
-    picks = []
+    picks = watches = []
+    regimes = {}
     try:
-        picks = check_buy_picks(cfg)
+        picks, watches, regimes = check_buy_picks(cfg)
     except Exception as e:
         log.error(f"Buy-picks scan failed: {e}")
 
@@ -232,20 +250,30 @@ def run():
     except Exception as e:
         log.warning(f"Could not load Telegram chat IDs: {e}")
 
-    if picks:
+    # Always send daily update email at 9 AM and 3 PM IST
+    if force_update:
+        try:
+            ok, msg = notifier.send_market_update_email(session_name, regimes, picks, watches)
+            log.info(f"{session_name} market update email: {'✅ ' + msg if ok else '❌ ' + msg}")
+        except Exception as e:
+            log.error(f"Market update email error: {e}")
+    elif picks:
+        # Other runs: only email if strong signals found
         try:
             ok, msg = notifier.send_daily_top3_email(picks)
             log.info(f"Daily top-3 email: {'✅ ' + msg if ok else '❌ ' + msg}")
         except Exception as e:
             log.error(f"Daily top-3 email error: {e}")
+    else:
+        log.info("No strong buy picks and not a forced run — email skipped.")
+
+    if picks:
         for cid in tg_chat_ids:
             try:
                 ok, msg = notifier.tg_daily_top3(picks, cid)
                 log.info(f"Daily top-3 Telegram → {cid}: {'✅' if ok else '❌ ' + msg}")
             except Exception as e:
                 log.error(f"Daily top-3 Telegram error ({cid}): {e}")
-    else:
-        log.info("No strong buy picks found today — daily email skipped.")
 
     # ── Step 2: Penny spike scan ───────────────────────────────────────
     log.info("Step 2/3: Scanning for penny spikes…")
