@@ -31,6 +31,89 @@ def _av_key() -> str:
     return os.environ.get("ALPHA_VANTAGE_KEY", "")
 
 
+def _td_key() -> str:
+    """Twelve Data API key."""
+    if os.path.exists(_CONFIG_FILE):
+        try:
+            with open(_CONFIG_FILE) as f:
+                return json.load(f).get("twelve_data", {}).get("api_key", "")
+        except Exception:
+            pass
+    try:
+        import streamlit as st
+        return str(st.secrets.get("TWELVE_DATA_KEY", ""))
+    except Exception:
+        pass
+    return os.environ.get("TWELVE_DATA_KEY", "")
+
+
+def get_rsi(ticker: str) -> float | None:
+    """Fetch RSI 14 from Twelve Data (US stocks only). Returns None on any failure."""
+    key = _td_key()
+    if not key:
+        return None
+    td_symbol = ticker.split(".")[0].replace("-USD", "").replace("^", "").upper()
+    try:
+        r = requests.get(
+            "https://api.twelvedata.com/rsi",
+            params={"symbol": td_symbol, "interval": "1day",
+                    "time_period": 14, "outputsize": 1, "apikey": key},
+            timeout=8,
+        )
+        data = r.json()
+        if data.get("status") == "ok" and data.get("values"):
+            return round(float(data["values"][0]["rsi"]), 2)
+    except Exception:
+        pass
+    return None
+
+
+# ── Kraken public API for crypto (no key needed, global access) ───────
+
+_KRAKEN_PAIRS = {
+    "BTC-USD":  "XBTUSD",
+    "ETH-USD":  "XETHZUSD",
+    "SOL-USD":  "SOLUSD",
+    "XRP-USD":  "XXRPZUSD",
+    "ADA-USD":  "ADAUSD",
+    "DOGE-USD": "XDGEZUSD",
+    "DOT-USD":  "DOTUSD",
+    "LTC-USD":  "XLTCZUSD",
+    "LINK-USD": "LINKUSD",
+    "AVAX-USD": "AVAXUSD",
+    "MATIC-USD":"MATICUSD",
+    "ATOM-USD": "ATOMUSD",
+}
+
+def _download_kraken(symbol: str, period: str = "1y") -> pd.DataFrame | None:
+    pair = _KRAKEN_PAIRS.get(symbol.upper())
+    if not pair:
+        return None
+    days = {"5d": 5, "1mo": 30, "3mo": 90, "6mo": 180, "1y": 365, "2y": 730}.get(period, 365)
+    since = int((pd.Timestamp.now() - pd.Timedelta(days=days)).timestamp())
+    try:
+        r = requests.get(
+            "https://api.kraken.com/0/public/OHLC",
+            params={"pair": pair, "interval": 1440, "since": since},
+            timeout=15,
+        )
+        data = r.json()
+        if data.get("error"):
+            return None
+        result = data.get("result", {})
+        candles = next((v for k, v in result.items() if k != "last" and isinstance(v, list)), None)
+        if not candles or len(candles) < 10:
+            return None
+        df = pd.DataFrame(candles, columns=["ts", "Open", "High", "Low", "Close", "vwap", "Volume", "count"])
+        df.index = pd.to_datetime(df["ts"].astype(int), unit="s")
+        df.index.name = "Date"
+        df = df[["Open", "High", "Low", "Close", "Volume"]].astype(float)
+        df = df.ffill().bfill().dropna(subset=["Close", "High", "Low", "Open"])
+        return df if len(df) >= 10 else None
+    except Exception:
+        return None
+
+
 # ══════════════════════════════════════════════════════════════════════
 #  LOW-LEVEL INDICATORS
 # ══════════════════════════════════════════════════════════════════════
@@ -52,6 +135,11 @@ def atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
 # ══════════════════════════════════════════════════════════════════════
 
 def download(ticker: str, period: str = "1y", interval: str = "1d") -> pd.DataFrame | None:
+    # Use Kraken for known crypto pairs — more reliable than yfinance for crypto
+    if interval == "1d" and ticker.upper() in _KRAKEN_PAIRS:
+        df = _download_kraken(ticker, period)
+        if df is not None:
+            return df
     try:
         df = yf.download(ticker, period=period, interval=interval,
                          auto_adjust=True, progress=False, threads=False)
@@ -321,6 +409,26 @@ def analyze_ticker(ticker: str, mc: dict, bm_df: pd.DataFrame | None,
     else:
         signal = "DO NOT BUY"
 
+    # ── GUARDRAIL 1: RSI overbought check (Twelve Data, US stocks only) ──
+    rsi_val      = None
+    is_overbought = False
+    is_crypto     = "-USD" in ticker.upper()
+    is_india      = ticker.upper().endswith(".NS")
+    if not is_india and not is_crypto:
+        rsi_val = get_rsi(ticker)
+        if rsi_val is not None:
+            is_overbought = rsi_val > 75
+
+    # ── GUARDRAIL 2: Extension penalty (price > 10% above 50 SMA) ────────
+    s50_series   = sma(close, 50)
+    s50_val      = float(s50_series.iloc[-1]) if len(s50_series) > 0 else price
+    extension_pct = round((price - s50_val) / s50_val * 100, 1) if s50_val else 0
+    is_extended  = extension_pct > 10
+
+    # Downgrade BUY TODAY if overbought or extended — stock needs to breathe
+    if signal == "BUY TODAY" and (is_overbought or is_extended):
+        signal = "PREPARE TO BUY"
+
     # Hold time recommendation based on signal & VCP
     if signal == "BUY TODAY":
         hold_days = "5–15 trading days (swing trade)"
@@ -334,7 +442,12 @@ def analyze_ticker(ticker: str, mc: dict, bm_df: pd.DataFrame | None,
     # Stop & targets
     sweep_low = sweep.get("sweep_low") or float(df["Low"].iloc[-1])
     stop = round(sweep_low * 0.995, 4)
-    rr   = calc_rr(price, stop, portfolio, risk_pct, cur)
+
+    # ── GUARDRAIL 3: Cap stop loss at 8% below entry ──────────────────────
+    max_stop = round(price * 0.92, 4)
+    stop     = max(stop, max_stop)  # Use whichever is closer to price (less risk)
+
+    rr = calc_rr(price, stop, portfolio, risk_pct, cur)
 
     # Win probability (approx)
     base_win  = 55 + conditions_met * 4
@@ -342,11 +455,13 @@ def analyze_ticker(ticker: str, mc: dict, bm_df: pd.DataFrame | None,
 
     # Verdict text
     reasons = []
-    if not c2:   reasons.append(f"only {minn['score']}/8 Minervini criteria")
-    if not c3:   reasons.append("no liquidity sweep today")
-    if not c4:   reasons.append(f"volume only {vol['ratio']}x avg (need 1.5x)")
-    if not c5:   reasons.append("price below 8 EMA")
-    if not rs_pass: reasons.append(f"RS {rs_score:.2f} underperforming benchmark")
+    if not c2:        reasons.append(f"only {minn['score']}/8 Minervini criteria")
+    if not c3:        reasons.append("no liquidity sweep today")
+    if not c4:        reasons.append(f"volume only {vol['ratio']}x avg (need 1.5x)")
+    if not c5:        reasons.append("price below 8 EMA")
+    if not rs_pass:   reasons.append(f"RS {rs_score:.2f} underperforming benchmark")
+    if is_overbought: reasons.append(f"RSI {rsi_val} overbought (>75) — wait for pullback")
+    if is_extended:   reasons.append(f"price {extension_pct}% above 50 SMA — extended")
 
     if signal == "BUY TODAY":
         verdict = (f"Strong setup — Minervini {minn['score']}/8, RS {rs_score:.2f} outperforming, "
@@ -354,7 +469,9 @@ def analyze_ticker(ticker: str, mc: dict, bm_df: pd.DataFrame | None,
                    f"Target T1 {cur}{rr['t1']} (+1.5R), T2 {cur}{rr['t2']} (+3R), T3 {cur}{rr['t3']} (+5R). "
                    f"Hold {hold_days}.")
     elif signal == "PREPARE TO BUY":
-        verdict = (f"Good setup but waiting for volume/sweep trigger. Minervini {minn['score']}/8, RS {rs_score:.2f}. "
+        ob_note = f" RSI {rsi_val} (overbought — wait for pullback)." if is_overbought else ""
+        ext_note = f" Extended {extension_pct}% above 50 SMA." if is_extended else ""
+        verdict = (f"Good setup but not quite ready.{ob_note}{ext_note} Minervini {minn['score']}/8, RS {rs_score:.2f}. "
                    f"Set alert at {cur}{price}. Targets once triggered: T1 {cur}{rr['t1']}, T2 {cur}{rr['t2']}. "
                    f"Hold plan: {hold_days}.")
     elif signal == "WATCH":
@@ -383,6 +500,10 @@ def analyze_ticker(ticker: str, mc: dict, bm_df: pd.DataFrame | None,
         "rr":              rr,
         "t1_price":        rr["t1"],
         "t2_price":        rr["t2"],
+        "rsi":             rsi_val,
+        "is_overbought":   is_overbought,
+        "is_extended":     is_extended,
+        "extension_pct":   extension_pct,
         "_df":             df,
     }
 

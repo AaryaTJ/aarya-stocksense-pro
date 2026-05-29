@@ -41,6 +41,7 @@ jobs:
         run: python monitor.py
         env:
           ALPHA_VANTAGE_KEY: ${{ secrets.ALPHA_VANTAGE_KEY }}
+          TWELVE_DATA_KEY:   ${{ secrets.TWELVE_DATA_KEY }}
           GEMINI_KEY:        ${{ secrets.GEMINI_KEY }}
           EMAIL_SENDER:      ${{ secrets.EMAIL_SENDER }}
           EMAIL_PASSWORD:    ${{ secrets.EMAIL_PASSWORD }}
@@ -57,5 +58,6 @@ jobs:
           TELEGRAM_CHAT_ID:  ${{ secrets.TELEGRAM_CHAT_ID }}
           GEMINI_KEY:        ${{ secrets.GEMINI_KEY }}
           ALPHA_VANTAGE_KEY: ${{ secrets.ALPHA_VANTAGE_KEY }}
+          TWELVE_DATA_KEY:   ${{ secrets.TWELVE_DATA_KEY }}
           SUPABASE_URL:      ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY:      ${{ secrets.SUPABASE_KEY }}
