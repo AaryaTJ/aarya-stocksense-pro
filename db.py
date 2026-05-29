@@ -212,3 +212,68 @@ def get_all_telegram_chat_ids() -> list[str]:
         chat_ids.append(env_cid)
 
     return chat_ids
+
+
+def get_all_users_with_settings() -> list[dict]:
+    """
+    For automated per-user alerts (monitor.py). Returns one dict per user:
+        {"user_id", "email", "positions", "telegram_chat_id", "time_stop"}
+    Requires the SERVICE key to read every user's settings + emails (admin API).
+    Returns [] when not configured (caller falls back to local settings).
+    """
+    import os as _os
+    url = key = ""
+    try:
+        import streamlit as st
+        url = str(st.secrets.get("SUPABASE_URL", ""))
+        key = str(st.secrets.get("SUPABASE_SERVICE_KEY", "")
+                  or st.secrets.get("SUPABASE_KEY", ""))
+    except Exception:
+        pass
+    if not url:
+        url = _os.environ.get("SUPABASE_URL", "")
+    if not key:
+        key = _os.environ.get("SUPABASE_SERVICE_KEY",
+                             _os.environ.get("SUPABASE_KEY", ""))
+    if not url or not key:
+        return []
+
+    headers = {"apikey": key, "Authorization": f"Bearer {key}"}
+
+    # settings rows: user_id -> data
+    settings_by_id: dict[str, dict] = {}
+    try:
+        r = requests.get(f"{url}/rest/v1/user_settings?select=user_id,data",
+                         headers=headers, timeout=12)
+        if r.status_code == 200:
+            for row in r.json():
+                settings_by_id[str(row.get("user_id"))] = row.get("data", {}) or {}
+    except Exception:
+        return []
+
+    # emails via admin API (needs service key)
+    email_by_id: dict[str, str] = {}
+    try:
+        ar = requests.get(f"{url}/auth/v1/admin/users", headers=headers, timeout=12)
+        if ar.status_code == 200:
+            data = ar.json()
+            users = data if isinstance(data, list) else data.get("users", [])
+            for u in users:
+                email_by_id[str(u.get("id"))] = u.get("email", "")
+    except Exception:
+        pass
+
+    out = []
+    for uid, data in settings_by_id.items():
+        positions = data.get("positions", []) or []
+        cid       = str(data.get("telegram_chat_id", "")).strip()
+        if not positions and not cid:
+            continue
+        out.append({
+            "user_id":          uid,
+            "email":            email_by_id.get(uid, ""),
+            "positions":        positions,
+            "telegram_chat_id": cid,
+            "time_stop":        data.get("time_stop", 5),
+        })
+    return out

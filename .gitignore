@@ -9,6 +9,7 @@ aarya_settings.json
 monitor.log
 test_run.log
 build_log.txt
+logs/
 
 # Build artifacts (desktop .exe)
 dist/

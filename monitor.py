@@ -33,7 +33,9 @@ sys.path.insert(0, BASE_DIR)
 import engine as eng
 import notifier
 import db
+import mldb
 from config import MARKET_CONFIGS
+from datetime import date as _date
 
 # ── Logging ────────────────────────────────────────────────────────────
 LOG_FILE = os.path.join(BASE_DIR, "monitor.log")
@@ -213,6 +215,58 @@ def check_portfolio(cfg: dict) -> list:
     return alerts
 
 
+def check_portfolio_users() -> list:
+    """
+    Per-user portfolio monitoring sourced from Supabase (each user's own
+    positions). Returns list of (user_dict, pos, monitor) tuples needing action.
+    Returns [] when Supabase is unavailable (caller falls back to local).
+    """
+    try:
+        users = db.get_all_users_with_settings()
+    except Exception as e:
+        log.warning(f"Could not load users from Supabase: {e}")
+        return []
+    if not users:
+        return []
+
+    log.info(f"Per-user portfolio check across {len(users)} user(s) with positions/Telegram.")
+    alerts = []
+    for u in users:
+        for pos in u.get("positions", []):
+            ticker = pos.get("ticker", "")
+            market = pos.get("market", "US")
+            mc = next((v for v in MARKET_CONFIGS.values() if v["key"] == market),
+                      MARKET_CONFIGS["🇺🇸 US Stocks"])
+            try:
+                m = eng.monitor_position(pos, mc, u.get("time_stop", 5))
+                if "error" in m:
+                    log.warning(f"[{u.get('email','?')}] monitor error {ticker}: {m['error']}")
+                    continue
+                if m.get("action", "🟢 HOLD") != "🟢 HOLD":
+                    log.info(f"SELL ALERT [{u.get('email','?')}]: {ticker} → {m['action']}")
+                    alerts.append((u, pos, m))
+            except Exception as e:
+                log.debug(f"{ticker} per-user check error: {e}")
+    return alerts
+
+
+def _dedup_send(kind: str, ticker: str, dedup_key: str, send_fn):
+    """Skip a send if its dedup_key was already recorded today; record on success."""
+    try:
+        if mldb.already_sent(dedup_key):
+            log.info(f"Dedup skip → {dedup_key}")
+            return True, "deduped"
+    except Exception:
+        pass
+    ok, msg = send_fn()
+    if ok:
+        try:
+            mldb.mark_sent(kind, ticker, dedup_key)
+        except Exception:
+            pass
+    return ok, msg
+
+
 # ── MAIN ───────────────────────────────────────────────────────────────
 
 def run():
@@ -223,15 +277,34 @@ def run():
 
     cfg = load_settings()
 
-    # Determine if this is a forced daily-update run (9 AM or 3 PM IST)
-    # 9 AM IST = 03:30 UTC  →  UTC hour 3
-    # 3 PM IST = 09:30 UTC  →  UTC hour 9
-    utc_hour = datetime.utcnow().hour
-    is_morning   = utc_hour == 3
-    is_afternoon = utc_hour == 9
-    force_update = is_morning or is_afternoon
-    session_name = "Morning" if is_morning else ("Afternoon" if is_afternoon else "")
-    log.info(f"UTC hour: {utc_hour} | Force update: {force_update} ({session_name})")
+    # ── Determine forced daily-update session ──────────────────────────
+    # Prefer the exact cron that triggered this run (deterministic, immune to
+    # GitHub Actions scheduling delays). Fall back to a widened UTC-hour window
+    # for local/manual runs where GH_SCHEDULE is not set.
+    #   Morning digest   = '30 3 * * 1-5'  (9:00 AM IST)
+    #   Afternoon digest = '30 9 * * 1-5'  (3:00 PM IST)
+    sched = os.environ.get("GH_SCHEDULE", "").strip()
+    if sched:
+        if sched == "30 3 * * 1-5":
+            force_update, session_name = True, "Morning"
+        elif sched == "30 9 * * 1-5":
+            force_update, session_name = True, "Afternoon"
+        else:
+            force_update, session_name = False, ""
+        log.info(f"Triggered by cron '{sched}' | Force update: {force_update} ({session_name})")
+    else:
+        utc_hour = datetime.utcnow().hour
+        if utc_hour in (3, 4):
+            force_update, session_name = True, "Morning"
+        elif utc_hour in (9, 10):
+            force_update, session_name = True, "Afternoon"
+        else:
+            force_update, session_name = False, ""
+        log.info(f"No cron env (local/manual). UTC hour {utc_hour} | Force update: {force_update} ({session_name})")
+
+    # Market open/closed status (awareness for 'buy now' wording)
+    statuses = {"us": eng.market_status("US"), "india": eng.market_status("IN")}
+    log.info(f"Market status — US: {statuses['us']['label']} | India: {statuses['india']['label']}")
 
     # ── Step 1: Top-3 buy picks ────────────────────────────────────────
     log.info("Step 1/3: Scanning for top buy picks…")
@@ -242,6 +315,19 @@ def run():
     except Exception as e:
         log.error(f"Buy-picks scan failed: {e}")
 
+    # ── Log every strong pick for the ML feedback loop (cold-start data) ──
+    if mldb.available():
+        logged = 0
+        for p in picks:
+            try:
+                if mldb.log_prediction(p):
+                    logged += 1
+            except Exception as e:
+                log.debug(f"log_prediction {p.get('ticker','?')} error: {e}")
+        log.info(f"Logged {logged}/{len(picks)} prediction(s) to Supabase.")
+    else:
+        log.info("Supabase ML store not configured — prediction logging skipped.")
+
     # Collect all Telegram chat IDs from website registrations + env fallback
     tg_chat_ids = []
     try:
@@ -250,17 +336,23 @@ def run():
     except Exception as e:
         log.warning(f"Could not load Telegram chat IDs: {e}")
 
-    # Always send daily update email at 9 AM and 3 PM IST
+    today = _date.today().isoformat()
+
+    # Always send daily update email at 9 AM and 3 PM IST (once per session/day)
     if force_update:
         try:
-            ok, msg = notifier.send_market_update_email(session_name, regimes, picks, watches)
+            ok, msg = _dedup_send(
+                "email_digest", session_name, f"email:digest:{session_name}:{today}",
+                lambda: notifier.send_market_update_email(session_name, regimes, picks, watches, statuses))
             log.info(f"{session_name} market update email: {'✅ ' + msg if ok else '❌ ' + msg}")
         except Exception as e:
             log.error(f"Market update email error: {e}")
     elif picks:
-        # Other runs: only email if strong signals found
+        # Other runs: only email if strong signals found (once per day)
         try:
-            ok, msg = notifier.send_daily_top3_email(picks)
+            ok, msg = _dedup_send(
+                "email_top3", "top3", f"email:top3:{today}",
+                lambda: notifier.send_daily_top3_email(picks))
             log.info(f"Daily top-3 email: {'✅ ' + msg if ok else '❌ ' + msg}")
         except Exception as e:
             log.error(f"Daily top-3 email error: {e}")
@@ -270,7 +362,9 @@ def run():
     if picks:
         for cid in tg_chat_ids:
             try:
-                ok, msg = notifier.tg_daily_top3(picks, cid)
+                ok, msg = _dedup_send(
+                    "tg_top3", "top3", f"tg:top3:{cid}:{today}",
+                    lambda: notifier.tg_daily_top3(picks, cid))
                 log.info(f"Daily top-3 Telegram → {cid}: {'✅' if ok else '❌ ' + msg}")
             except Exception as e:
                 log.error(f"Daily top-3 Telegram error ({cid}): {e}")
@@ -285,13 +379,17 @@ def run():
 
     if spikes:
         try:
-            ok, msg = notifier.send_daily_penny_email(spikes)
+            ok, msg = _dedup_send(
+                "email_penny", "penny", f"email:penny:{today}",
+                lambda: notifier.send_daily_penny_email(spikes))
             log.info(f"Penny spike email: {'✅ ' + msg if ok else '❌ ' + msg}")
         except Exception as e:
             log.error(f"Penny spike email error: {e}")
         for cid in tg_chat_ids:
             try:
-                ok, msg = notifier.tg_penny_spikes(spikes, cid)
+                ok, msg = _dedup_send(
+                    "tg_penny", "penny", f"tg:penny:{cid}:{today}",
+                    lambda: notifier.tg_penny_spikes(spikes, cid))
                 log.info(f"Penny spike Telegram → {cid}: {'✅' if ok else '❌ ' + msg}")
             except Exception as e:
                 log.error(f"Penny spike Telegram error ({cid}): {e}")
@@ -299,31 +397,66 @@ def run():
         log.info("No penny spikes today — penny email skipped.")
 
     # ── Step 3: Portfolio sell alerts ──────────────────────────────────
+    # Prefer per-user positions from Supabase (each user gets alerts for THEIR
+    # own positions, on THEIR email + Telegram). Fall back to local settings
+    # (single-user / offline) when Supabase isn't configured.
     log.info("Step 3/3: Checking portfolio for sell alerts…")
-    sell_alerts = []
+    n_alerts = 0
     try:
-        sell_alerts = check_portfolio(cfg)
+        user_alerts = check_portfolio_users()
     except Exception as e:
-        log.error(f"Portfolio check failed: {e}")
+        log.error(f"Per-user portfolio check failed: {e}")
+        user_alerts = []
 
-    if sell_alerts:
-        for pos, m in sell_alerts:
+    if user_alerts:
+        for u, pos, m in user_alerts:
+            n_alerts += 1
+            tkr = pos.get("ticker", "?")
+            key = f"sell:{u['user_id']}:{tkr}:{m['action']}:{today}"
+            if u.get("email"):
+                try:
+                    ok, msg = _dedup_send("email_sell", tkr, "email:" + key,
+                                          lambda: notifier.send_sell_alert(pos, m, to_email=u["email"]))
+                    log.info(f"Sell email [{u['email']}] {tkr}: {'✅' if ok else '❌ ' + msg}")
+                except Exception as e:
+                    log.error(f"Sell email error ({tkr}): {e}")
+            cid = u.get("telegram_chat_id", "")
+            if cid:
+                try:
+                    ok, msg = _dedup_send("tg_sell", tkr, "tg:" + key,
+                                          lambda: notifier.tg_sell_alert(pos, m, cid))
+                    log.info(f"Sell Telegram [{cid}] {tkr}: {'✅' if ok else '❌ ' + msg}")
+                except Exception as e:
+                    log.error(f"Sell Telegram error ({tkr}): {e}")
+    else:
+        # Fallback: local settings positions → global recipients + all chat IDs
+        try:
+            local_alerts = check_portfolio(cfg)
+        except Exception as e:
+            log.error(f"Local portfolio check failed: {e}")
+            local_alerts = []
+        for pos, m in local_alerts:
+            n_alerts += 1
+            tkr = pos.get("ticker", "?")
+            key = f"sell:local:{tkr}:{m['action']}:{today}"
             try:
-                ok, msg = notifier.send_sell_alert(pos, m)
-                log.info(f"Sell alert for {pos.get('ticker','?')}: {'✅ ' + msg if ok else '❌ ' + msg}")
+                ok, msg = _dedup_send("email_sell", tkr, "email:" + key,
+                                      lambda: notifier.send_sell_alert(pos, m))
+                log.info(f"Sell alert email {tkr}: {'✅' if ok else '❌ ' + msg}")
             except Exception as e:
                 log.error(f"Sell alert email error: {e}")
             for cid in tg_chat_ids:
                 try:
-                    ok, msg = notifier.tg_sell_alert(pos, m, cid)
+                    ok, msg = _dedup_send("tg_sell", tkr, f"tg:{cid}:" + key,
+                                          lambda: notifier.tg_sell_alert(pos, m, cid))
                     log.info(f"Sell alert Telegram → {cid}: {'✅' if ok else '❌ ' + msg}")
                 except Exception as e:
                     log.error(f"Sell alert Telegram error ({cid}): {e}")
-    else:
-        log.info("All portfolio positions are healthy — no sell alerts.")
+        if not local_alerts:
+            log.info("All portfolio positions are healthy — no sell alerts.")
 
     log.info(f"Monitor run complete. {len(picks)} picks · {len(spikes)} penny spikes · "
-             f"{len(sell_alerts)} sell alert(s).")
+             f"{n_alerts} sell alert(s).")
     log.info("=" * 60)
 
 

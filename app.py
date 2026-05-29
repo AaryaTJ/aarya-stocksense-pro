@@ -299,7 +299,16 @@ def sidebar(cfg: dict):
                  f"({reg['pct_above']:+.1f}%)</div>")
         except Exception:
             pass
-        card(f"<div style='font-size:10px;color:#1a2f4a;text-align:center;margin-top:8px;'>"
+        try:
+            ms   = eng.market_status(mc["key"])
+            mcol = "#1D9E75" if ms["open"] else "#FF7A50"
+            extra = f" · {ms['local_time']}" if ms.get("local_time") else ""
+            card(f"<div style='background:{mcol}14;border:1px solid {mcol};border-radius:6px;"
+                 f"padding:6px;text-align:center;font-size:11px;font-weight:700;color:{mcol};margin-top:8px;'>"
+                 f"{ms['label']}{extra}</div>")
+        except Exception:
+            pass
+        card(f"<div style='font-size:10px;color:#1a2f4a;text-align:center;margin-top:4px;'>"
              f"Hours: {mc.get('hours','—')}</div>")
 
         # ── User info + logout ─────────────────────────────────────
@@ -1420,7 +1429,8 @@ def tab_settings(cfg, market):
                     with st.spinner("Sending…"):
                         try:
                             ok, msg = notifier.send_telegram(
-                                "✅ *Aarya StockSense* — Telegram alerts are working\\! You will receive buy picks, penny spike alerts and sell signals here automatically\\.",
+                                "✅ <b>Aarya StockSense</b> — Telegram alerts are working! "
+                                "You will receive buy picks, penny spike alerts and sell signals here automatically.",
                                 _test_cid,
                             )
                         except Exception as _tte:
@@ -1451,7 +1461,7 @@ def _save(cfg: dict):
     if user:
         db.save_user_settings(user["id"], cfg)
     else:
-        _save(cfg)
+        save_settings(cfg)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1479,6 +1489,7 @@ def show_login():
     with st.form("login_form"):
         email    = st.text_input("Email", placeholder="your@email.com")
         password = st.text_input("Password", type="password", placeholder="••••••••")
+        remember = st.checkbox("Remember me for 30 days", value=True)
         submitted = st.form_submit_button("Login", use_container_width=True, type="primary")
 
     if submitted:
@@ -1486,7 +1497,7 @@ def show_login():
             st.error("Enter your email and password.")
         else:
             with st.spinner("Signing in…"):
-                user, err = auth.login(email, password)
+                user, err = auth.login(email, password, remember=remember)
             if err:
                 st.error(err)
             else:

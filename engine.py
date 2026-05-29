@@ -9,10 +9,17 @@ warnings.filterwarnings("ignore")
 
 import json
 import os
+from datetime import datetime, time as _dtime
+from zoneinfo import ZoneInfo
+
 import numpy as np
 import pandas as pd
 import yfinance as yf
 import requests
+
+from applog import get_logger
+
+log = get_logger("aarya_engine")
 
 _CONFIG_FILE = os.path.join(os.path.dirname(__file__), "aarya_config.json")
 
@@ -149,11 +156,42 @@ def download(ticker: str, period: str = "1y", interval: str = "1d") -> pd.DataFr
             df.columns = df.columns.get_level_values(0)
         df = df.ffill().bfill()
         df = df.dropna(subset=["Close", "High", "Low", "Open"])
+        # Drop any rows with non-positive prices (bad/corrupt data)
+        df = df[(df["Close"] > 0) & (df["Open"] > 0) & (df["High"] > 0) & (df["Low"] > 0)]
         if len(df) < 10:
             return None
         return df
     except Exception:
         return None
+
+
+def data_quality(df: pd.DataFrame, ticker: str = "", max_stale_days: int = 6,
+                 is_crypto: bool = False) -> tuple[bool, str]:
+    """
+    Validate a price frame BEFORE it is fed to any signal/prediction.
+    Checks: not empty, no NaN in OHLC, all prices > 0, and freshness.
+    Returns (ok, reason). reason is '' when ok.
+    """
+    if df is None or len(df) == 0:
+        return False, "no data"
+    ohlc = [c for c in ("Open", "High", "Low", "Close") if c in df.columns]
+    if df[ohlc].isnull().any().any():
+        return False, "contains NaN/null prices"
+    if (df[ohlc] <= 0).any().any():
+        return False, "contains non-positive prices"
+    # Freshness — last bar should be recent. Daily bars skip weekends/holidays,
+    # so allow a few days of slack. Crypto trades 24/7 → stricter.
+    try:
+        last = pd.Timestamp(df.index[-1])
+        if last.tzinfo is not None:
+            last = last.tz_localize(None)
+        age_days = (pd.Timestamp.now() - last).days
+        limit = 2 if is_crypto else max_stale_days
+        if age_days > limit:
+            return False, f"stale data — last bar {age_days}d old"
+    except Exception:
+        pass
+    return True, ""
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -179,6 +217,48 @@ def check_regime(mc: dict) -> dict:
         "sma200":    sma200_v,
         "pct_above": pct,
         "_df":       df,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  MARKET HOURS AWARENESS
+# ══════════════════════════════════════════════════════════════════════
+
+# key -> (IANA timezone, open HH:MM, close HH:MM)
+_MARKET_HOURS = {
+    "US":     ("America/New_York", (9, 30), (16, 0)),
+    "IN":     ("Asia/Kolkata",     (9, 15), (15, 30)),
+    "UK":     ("Europe/London",    (8, 0),  (16, 30)),
+    "EU":     ("Europe/Berlin",    (9, 0),  (17, 30)),
+    "CA":     ("America/Toronto",  (9, 30), (16, 0)),
+    "JP":     ("Asia/Tokyo",       (9, 0),  (15, 30)),
+}
+
+
+def market_status(market_key: str) -> dict:
+    """
+    Whether a market is currently open. Crypto is always open.
+    NOTE: does not account for public holidays (weekday + clock only).
+    Returns {"open": bool, "label": str, "local_time": "HH:MM TZ"}.
+    """
+    if market_key == "CRYPTO":
+        return {"open": True, "label": "🟢 Open (24/7)", "local_time": ""}
+    info = _MARKET_HOURS.get(market_key)
+    if not info:
+        return {"open": True, "label": "Unknown", "local_time": ""}
+    tz_name, (oh, om), (ch, cm) = info
+    try:
+        now = datetime.now(ZoneInfo(tz_name))
+    except Exception:
+        return {"open": True, "label": "Unknown", "local_time": ""}
+    local_str = now.strftime("%H:%M ") + tz_name.split("/")[-1]
+    if now.weekday() >= 5:          # Sat/Sun
+        return {"open": False, "label": "🔴 Closed (weekend)", "local_time": local_str}
+    is_open = _dtime(oh, om) <= now.time() <= _dtime(ch, cm)
+    return {
+        "open":       is_open,
+        "label":      "🟢 Open" if is_open else "🔴 Closed",
+        "local_time": local_str,
     }
 
 
@@ -365,6 +445,13 @@ def analyze_ticker(ticker: str, mc: dict, bm_df: pd.DataFrame | None,
                    portfolio: float, risk_pct: float) -> dict | None:
     df = download(ticker, period="1y")
     if df is None or len(df) < 50:
+        return None
+
+    # Data-quality gate — reject (and log) bad data instead of signalling on it
+    is_crypto_t = mc.get("is_crypto", False) or "-USD" in ticker.upper()
+    ok, why = data_quality(df, ticker, is_crypto=is_crypto_t)
+    if not ok:
+        log.warning(f"{ticker}: rejected — {why}")
         return None
 
     close = df["Close"].squeeze()

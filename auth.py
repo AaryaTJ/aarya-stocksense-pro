@@ -45,6 +45,16 @@ def get_current_user() -> dict | None:
                 if user:
                     st.session_state["_aarya_auth"] = user
                     st.session_state["_block_chk"]  = True
+                    # Supabase rotates the refresh token on every refresh. Persist
+                    # the NEW token back to the cookie, else the next reload reuses
+                    # a consumed token and the user gets logged out.
+                    new_rt = user.get("refresh_token")
+                    if new_rt:
+                        try:
+                            ctrl.set(_COOKIE_NAME, f"{user['id']}:{new_rt}",
+                                     expires=datetime.now() + timedelta(days=_COOKIE_DAYS))
+                        except Exception:
+                            pass
                     return user
                 ctrl.remove(_COOKIE_NAME)
         except Exception:
@@ -52,8 +62,9 @@ def get_current_user() -> dict | None:
     return None
 
 
-def login(email: str, password: str) -> tuple[dict | None, str]:
-    """Sign in. Returns (user_dict, error_string)."""
+def login(email: str, password: str, remember: bool = True) -> tuple[dict | None, str]:
+    """Sign in. Returns (user_dict, error_string). When remember is False, no
+    persistent cookie is written (session lasts only until the tab/app closes)."""
     client = _get_client()
     if not client:
         return None, "Database not configured — check Streamlit secrets."
@@ -86,7 +97,7 @@ def login(email: str, password: str) -> tuple[dict | None, str]:
     st.session_state["_block_chk"]  = True
 
     ctrl = _cookie_ctrl()
-    if ctrl and r_token:
+    if ctrl and r_token and remember:
         try:
             ctrl.set(_COOKIE_NAME, f"{uid}:{r_token}",
                      expires=datetime.now() + timedelta(days=_COOKIE_DAYS))

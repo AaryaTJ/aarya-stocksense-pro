@@ -75,6 +75,51 @@ CREATE TABLE public.settings (
 ALTER TABLE public.settings ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Service role full access"
   ON public.settings USING (true) WITH CHECK (true);
+
+-- Prediction tracking for the ML feedback loop (every logged pick)
+CREATE TABLE public.predictions (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  created_at timestamptz DEFAULT now(),
+  pred_date date NOT NULL,
+  ticker text NOT NULL,
+  market text,
+  signal text,
+  price numeric, entry numeric, stop numeric,
+  t1 numeric, t2 numeric, t3 numeric,
+  win_prob numeric, minervini int, rs_score numeric, rsi numeric,
+  confidence numeric,
+  horizon_days int DEFAULT 10,
+  features jsonb DEFAULT '{}',
+  status text DEFAULT 'open',          -- open | evaluated
+  outcome_pct numeric, hit boolean, evaluated_at timestamptz,
+  UNIQUE (ticker, pred_date)
+);
+ALTER TABLE public.predictions ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Service role full access"
+  ON public.predictions USING (true) WITH CHECK (true);
+
+-- Notification de-duplication (don't send the same alert twice/day)
+CREATE TABLE public.sent_notifications (
+  dedup_key text PRIMARY KEY,
+  kind text, ticker text,
+  sent_date date DEFAULT current_date,
+  created_at timestamptz DEFAULT now()
+);
+ALTER TABLE public.sent_notifications ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Service role full access"
+  ON public.sent_notifications USING (true) WITH CHECK (true);
+
+-- ML model state (ensemble weights + rolling accuracy) — used from Phase 3
+CREATE TABLE public.model_state (
+  id text PRIMARY KEY DEFAULT 'main',
+  weights jsonb DEFAULT '{}',
+  rolling_acc jsonb DEFAULT '{}',
+  locked boolean DEFAULT false,
+  updated_at timestamptz DEFAULT now()
+);
+ALTER TABLE public.model_state ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Service role full access"
+  ON public.model_state USING (true) WITH CHECK (true);
 ```
 
 ### Authentication Settings (Supabase → Authentication → Settings)
@@ -160,13 +205,20 @@ Add each of these:
 |---|---|
 | `SUPABASE_URL` | Your Supabase project URL |
 | `SUPABASE_KEY` | Supabase anon key |
+| `SUPABASE_SERVICE_KEY` | Supabase **service role** key — required for per-user sell alerts + prediction logging |
 | `TELEGRAM_TOKEN` | Telegram bot token |
 | `TELEGRAM_CHAT_ID` | Your personal Telegram Chat ID (fallback) |
+| `TWELVE_DATA_KEY` | Twelve Data API key (RSI for US stocks) |
 | `GEMINI_KEY` | Gemini API key |
 | `ALPHA_VANTAGE_KEY` | Alpha Vantage key |
 | `EMAIL_SENDER` | Gmail address used to send alerts |
 | `EMAIL_PASSWORD` | Gmail app password |
 | `EMAIL_RECIPIENTS` | Comma-separated alert recipient emails |
+
+> **Important:** `SUPABASE_SERVICE_KEY` (Supabase → Settings → API → `service_role` key) is
+> what lets the background scanner read every user's saved positions and send each person
+> sell alerts on their own email + Telegram, and write prediction rows. Without it, automated
+> per-user sell alerts and ML logging are skipped (the app still works).
 
 ### Getting Your Telegram Chat ID
 1. Open Telegram → message **@userinfobot** → send `/start`
@@ -273,6 +325,8 @@ Keep these credentials in a secure password manager:
 | `notifier.py` | Email and Telegram alert functions |
 | `monitor.py` | Background scanner — runs via GitHub Actions |
 | `bot_poll.py` | Telegram bot — runs via GitHub Actions |
+| `mldb.py` | Supabase store for predictions, notification dedup, ML model state |
+| `applog.py` | Shared rotating-file logger (logs/app.log) |
 | `config.py` | Market configs, defaults |
 | `auth.py` | Login / authentication |
 | `supabase_client.py` | Supabase connection |

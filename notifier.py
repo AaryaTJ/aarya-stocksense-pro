@@ -3,10 +3,12 @@ Aarya StockSense Pro — notifier.py
 Gmail SMTP email alerts + Gemini AI briefings.
 """
 
+import html as _html
 import json
 import os
 import smtplib
 import ssl
+import time
 import urllib.parse
 from datetime import datetime
 from email.mime.multipart import MIMEMultipart
@@ -14,7 +16,16 @@ from email.mime.text import MIMEText
 
 import requests
 
+from applog import get_logger
+
+log = get_logger("aarya_notifier")
+
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "aarya_config.json")
+
+
+def _esc(s) -> str:
+    """Escape a value for Telegram HTML parse mode."""
+    return _html.escape(str(s), quote=False)
 
 _DEFAULT_CONFIG = {
     "alpha_vantage": {"api_key": ""},
@@ -116,37 +127,52 @@ def _wrap(title: str, accent: str, body: str) -> str:
 </div></body></html>"""
 
 
-def send_alert(subject: str, html_body: str) -> tuple[bool, str]:
+def send_alert(subject: str, html_body: str, max_attempts: int = 3,
+               recipients: list | None = None) -> tuple[bool, str]:
     keys = load_keys()
     ec   = keys.get("email", {})
     sender     = ec.get("sender_address", "").strip()
     password   = ec.get("sender_app_password", "").strip()
-    recipients = ec.get("alert_recipients", [])
+    if recipients is None:
+        recipients = ec.get("alert_recipients", [])
+    recipients = [r for r in recipients if r]
 
     if not sender or not password:
+        log.warning("Email skipped: Gmail sender not configured.")
         return False, "Gmail sender not configured. Go to Settings → Alert Settings."
     if not recipients:
+        log.warning("Email skipped: no recipients configured.")
         return False, "No recipient emails added yet."
 
-    try:
-        ctx = ssl.create_default_context()
-        with smtplib.SMTP(ec.get("smtp_server", "smtp.gmail.com"),
-                          ec.get("smtp_port", 587), timeout=20) as srv:
-            srv.ehlo()
-            srv.starttls(context=ctx)
-            srv.login(sender, password)
-            for rcpt in recipients:
-                msg = MIMEMultipart("alternative")
-                msg["Subject"] = subject
-                msg["From"]    = f"Aarya StockSense Pro <{sender}>"
-                msg["To"]      = rcpt
-                msg.attach(MIMEText(html_body, "html"))
-                srv.sendmail(sender, rcpt, msg.as_string())
-        return True, f"Sent to {len(recipients)} recipient(s)"
-    except smtplib.SMTPAuthenticationError:
-        return False, "Gmail authentication failed. Check sender email and app password."
-    except Exception as e:
-        return False, str(e)
+    last_err = ""
+    for attempt in range(1, max_attempts + 1):
+        try:
+            ctx = ssl.create_default_context()
+            with smtplib.SMTP(ec.get("smtp_server", "smtp.gmail.com"),
+                              ec.get("smtp_port", 587), timeout=20) as srv:
+                srv.ehlo()
+                srv.starttls(context=ctx)
+                srv.login(sender, password)
+                for rcpt in recipients:
+                    msg = MIMEMultipart("alternative")
+                    msg["Subject"] = subject
+                    msg["From"]    = f"Aarya StockSense Pro <{sender}>"
+                    msg["To"]      = rcpt
+                    msg.attach(MIMEText(html_body, "html"))
+                    srv.sendmail(sender, rcpt, msg.as_string())
+            log.info(f"Email sent: '{subject}' → {len(recipients)} recipient(s) (attempt {attempt})")
+            return True, f"Sent to {len(recipients)} recipient(s)"
+        except smtplib.SMTPAuthenticationError:
+            log.error("Email auth failed — bad sender/app password. Not retrying.")
+            return False, "Gmail authentication failed. Check sender email and app password."
+        except Exception as e:
+            last_err = str(e)
+            log.warning(f"Email attempt {attempt}/{max_attempts} failed: {last_err}")
+            if attempt < max_attempts:
+                time.sleep(2 ** attempt)   # 2s, 4s backoff
+
+    log.error(f"Email FAILED after {max_attempts} attempts: '{subject}' — {last_err}")
+    return False, f"Failed after {max_attempts} attempts: {last_err}"
 
 
 # ── ALERT TEMPLATES ────────────────────────────────────────────────────
@@ -188,7 +214,7 @@ def send_buy_alert(result: dict) -> tuple[bool, str]:
     return send_alert(f"[Aarya] {sig}: {t} @ {cur}{result.get('price','?')}", html)
 
 
-def send_sell_alert(pos: dict, monitor: dict) -> tuple[bool, str]:
+def send_sell_alert(pos: dict, monitor: dict, to_email: str = "") -> tuple[bool, str]:
     t   = monitor.get("ticker", "?")
     act = monitor.get("action", "?")
     cur = monitor.get("currency", "$")
@@ -225,7 +251,8 @@ def send_sell_alert(pos: dict, monitor: dict) -> tuple[bool, str]:
           f"Entry date: {pos.get('date','—')}</div>"
     )
     html = _wrap(f"🚨 Action Required: {act}", col, body)
-    return send_alert(f"[Aarya] ACTION: {act} — {t} ({pct:+.2f}%)", html)
+    rcpts = [to_email] if to_email else None
+    return send_alert(f"[Aarya] ACTION: {act} — {t} ({pct:+.2f}%)", html, recipients=rcpts)
 
 
 def send_penny_spike_alert(ticker: str, price: float, change_pct: float,
@@ -377,6 +404,7 @@ def send_market_update_email(
     regimes: dict,          # {"us": regime_dict, "india": regime_dict}
     picks: list,            # BUY TODAY / PREPARE TO BUY picks
     watches: list,          # WATCH picks (shown when no strong picks)
+    statuses: dict = None,  # {"us": {open,label}, "india": {open,label}} — optional
 ) -> tuple[bool, str]:
     """Always-send daily update email for morning (9 AM IST) and afternoon (3 PM IST)."""
 
@@ -457,9 +485,38 @@ def send_market_update_email(
             f"Stay patient.</div>"
         )
 
+    # ── Market open/closed status ──────────────────────────────────────
+    status_html = ""
+    any_open = False
+    if statuses:
+        chips = ""
+        for mkt_name, sdict in statuses.items():
+            is_open = sdict.get("open", False)
+            any_open = any_open or is_open
+            scol = "#00C48C" if is_open else "#FF7A50"
+            flag = "🇺🇸" if mkt_name == "us" else "🇮🇳"
+            chips += (
+                f"<span style='display:inline-block;background:#121e30;border:1px solid {scol};"
+                f"border-radius:6px;padding:4px 10px;margin:2px 6px 2px 0;color:{scol};font-size:11px;'>"
+                f"{flag} {_esc(sdict.get('label',''))}</span>"
+            )
+        status_html = f"<div style='margin-bottom:10px;'>{chips}</div>"
+
+    # When picks exist but markets are closed, reframe as 'prepare' not 'buy now'
+    closed_note = ""
+    if picks and statuses and not any_open:
+        closed_note = (
+            f"<div style='margin:10px 0;padding:10px 14px;background:#2d1a0a;"
+            f"border:1px solid #FF7A50;border-radius:6px;color:#FFB340;font-size:12px;'>"
+            f"🕒 Markets are closed right now. Treat these as setups to <b>prepare</b> for the "
+            f"next session — plan your entry, don't chase. Re-check live prices at open.</div>"
+        )
+
     body = (
         f"<div style='color:#4A7FA5;font-size:11px;margin-bottom:12px;'>{time_str}</div>"
+        + status_html +
         f"<div style='margin-bottom:12px;'>{regime_html}</div>"
+        + closed_note
         + picks_html +
         f"<div style='margin-top:16px;padding:10px 14px;background:#121e30;"
         f"border:1px solid #1a2f4a;border-radius:6px;color:#4A7FA5;font-size:11px;'>"
@@ -670,65 +727,88 @@ def _get_tg_creds() -> tuple[str, str]:
     return token.strip(), chat_id.strip()
 
 
-def send_telegram(message: str, chat_id: str = "") -> tuple[bool, str]:
+def send_telegram(message: str, chat_id: str = "", max_attempts: int = 3) -> tuple[bool, str]:
+    """Send a Telegram message (HTML parse mode) with retry + delivery logging."""
     token, default_cid = _get_tg_creds()
     cid = chat_id.strip() or default_cid
     if not token or not cid:
+        log.warning("Telegram skipped: token or chat_id missing.")
         return False, "Telegram not configured."
-    try:
-        r = requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": cid, "text": message, "parse_mode": "Markdown"},
-            timeout=15,
-        )
-        if r.status_code == 200 and r.json().get("ok"):
-            return True, "Telegram sent."
-        return False, r.json().get("description", r.text[:120])
-    except Exception as e:
-        return False, str(e)
+
+    last_err = ""
+    for attempt in range(1, max_attempts + 1):
+        try:
+            r = requests.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                json={"chat_id": cid, "text": message, "parse_mode": "HTML",
+                      "disable_web_page_preview": True},
+                timeout=15,
+            )
+            if r.status_code == 200 and r.json().get("ok"):
+                log.info(f"Telegram sent → {cid} (attempt {attempt})")
+                return True, "Telegram sent."
+            # Telegram API rejected the message (bad chat_id, blocked bot, etc.)
+            desc = ""
+            try:
+                desc = r.json().get("description", r.text[:120])
+            except Exception:
+                desc = r.text[:120]
+            # 4xx other than 429 won't fix on retry — bail out
+            if r.status_code != 429 and 400 <= r.status_code < 500:
+                log.warning(f"Telegram rejected → {cid}: {desc}")
+                return False, desc
+            last_err = desc
+        except Exception as e:
+            last_err = str(e)
+        log.warning(f"Telegram attempt {attempt}/{max_attempts} failed → {cid}: {last_err}")
+        if attempt < max_attempts:
+            time.sleep(2 ** attempt)
+
+    log.error(f"Telegram FAILED after {max_attempts} attempts → {cid}: {last_err}")
+    return False, f"Failed after {max_attempts} attempts: {last_err}"
 
 
 def tg_daily_top3(picks: list, chat_id: str = "") -> tuple[bool, str]:
     if not picks:
         return False, "No picks."
-    lines = ["📈 *Aarya Top Picks*"]
+    lines = ["📈 <b>Aarya Top Picks</b>"]
     for i, p in enumerate(picks[:3], 1):
-        cur = p.get("currency", "$")
+        cur = _esc(p.get("currency", "$"))
         rr  = p.get("rr", {})
         lines.append(
-            f"\n#{i} *{p.get('ticker','?')}* — {p.get('signal','?')}"
-            f"\nEntry: {cur}{p.get('entry','—')} | Stop: {cur}{p.get('stop','—')}"
-            f" | T1: {cur}{rr.get('t1','—')} | Win: {p.get('win_prob','?')}%"
+            f"\n#{i} <b>{_esc(p.get('ticker','?'))}</b> — {_esc(p.get('signal','?'))}"
+            f"\nEntry: {cur}{_esc(p.get('entry','—'))} | Stop: {cur}{_esc(p.get('stop','—'))}"
+            f" | T1: {cur}{_esc(rr.get('t1','—'))} | Win: {_esc(p.get('win_prob','?'))}%"
         )
-    lines.append("\n_Open the app for full analysis\\. Not financial advice\\._")
+    lines.append("\n<i>Open the app for full analysis. Not financial advice.</i>")
     return send_telegram("\n".join(lines), chat_id)
 
 
 def tg_penny_spikes(spikes: list, chat_id: str = "") -> tuple[bool, str]:
     if not spikes:
         return False, "No spikes."
-    lines = [f"⚡ *Penny Spike Alert — {len(spikes)} stock(s)*"]
+    lines = [f"⚡ <b>Penny Spike Alert — {len(spikes)} stock(s)</b>"]
     for s in spikes:
-        cur = s.get("currency", "$")
+        cur = _esc(s.get("currency", "$"))
         lines.append(
-            f"\n*{s['ticker']}*: \\+{s['change']:.1f}% @ {cur}{s['price']:.2f}"
-            f" \\({s.get('vol_ratio',1):.1f}x vol\\)"
+            f"\n<b>{_esc(s['ticker'])}</b>: +{s['change']:.1f}% @ {cur}{s['price']:.2f}"
+            f" ({s.get('vol_ratio',1):.1f}x vol)"
         )
-    lines.append("\n⚠️ _High risk\\. Verify live price before acting\\._")
+    lines.append("\n⚠️ <i>High risk. Verify live price before acting.</i>")
     return send_telegram("\n".join(lines), chat_id)
 
 
 def tg_sell_alert(pos: dict, monitor: dict, chat_id: str = "") -> tuple[bool, str]:
-    ticker = monitor.get("ticker", "?")
-    action = monitor.get("action", "?")
-    cur    = monitor.get("currency", "$")
+    ticker = _esc(monitor.get("ticker", "?"))
+    action = _esc(monitor.get("action", "?"))
+    cur    = _esc(monitor.get("currency", "$"))
     pnl    = monitor.get("pnl_usd", 0)
     pct    = monitor.get("pnl_pct", 0)
     msg = (
-        f"🚨 *ACTION REQUIRED*\n"
-        f"*{ticker}* — {action}\n"
-        f"Entry: {cur}{monitor.get('entry','—')} → Now: {cur}{monitor.get('current','—')}\n"
-        f"P&L: {cur}{pnl:+.2f} \\({pct:+.1f}%\\)\n"
-        f"_Open the app to act\\._"
+        f"🚨 <b>ACTION REQUIRED</b>\n"
+        f"<b>{ticker}</b> — {action}\n"
+        f"Entry: {cur}{_esc(monitor.get('entry','—'))} → Now: {cur}{_esc(monitor.get('current','—'))}\n"
+        f"P&amp;L: {cur}{pnl:+.2f} ({pct:+.1f}%)\n"
+        f"<i>Open the app to act.</i>"
     )
     return send_telegram(msg, chat_id)
