@@ -640,8 +640,10 @@ def run():
             log.info("All portfolio positions are healthy — no sell alerts.")
 
     # ── Step 4: ML feedback loop (only on the afternoon US-open run) ─
-    # Once per day is enough; pick the 13:30 UTC run (7 PM IST, US open) so we
-    # have fresh closes from the previous US session and India intraday.
+    # Evaluation runs every weekday at the 13:30 UTC run (7 PM IST, US open) so
+    # outcomes stay fresh. Training is heavier and runs only Mon/Wed/Fri — that
+    # gives every training cycle ~48h of new evaluated data, yielding more
+    # stable weights and fewer noisy updates.
     if mldb.available() and sched == "30 13 * * 1-5":
         log.info("Step 4/4: ML evaluate + train…")
         try:
@@ -649,10 +651,14 @@ def run():
             log.info(f"Evaluator: {n_eval} evaluated  {n_hit} hit  {n_soft} soft-hit")
         except Exception as e:
             log.error(f"ML evaluation failed: {e}")
-        try:
-            ml_predictor.train_ensemble()
-        except Exception as e:
-            log.error(f"ML training failed: {e}")
+        # Mon=0, Wed=2, Fri=4  →  trains roughly every 2 days
+        if datetime.utcnow().weekday() in (0, 2, 4):
+            try:
+                ml_predictor.train_ensemble()
+            except Exception as e:
+                log.error(f"ML training failed: {e}")
+        else:
+            log.info("Training skipped — runs Mon/Wed/Fri only (every ~2 days).")
 
     # ── Step 5: Weekly report (Sunday only) ───────────────────────────
     if sched == "30 12 * * 0":
