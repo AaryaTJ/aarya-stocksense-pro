@@ -65,7 +65,7 @@ MARKET_CONFIGS = {
             "WIPRO.NS","ASIANPAINT.NS","TITAN.NS","MARUTI.NS","ULTRACEMCO.NS",
         ],
         "growth": [
-            "POLYCAB.NS","ZOMATO.NS","RVNL.NS","IRFC.NS","NHPC.NS",
+            "POLYCAB.NS","ETERNAL.NS","RVNL.NS","IRFC.NS","NHPC.NS",
             "TATAPOWER.NS","M&M.NS","ADANIGREEN.NS","SUZLON.NS","IREDA.NS",
         ],
         "default": [
