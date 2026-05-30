@@ -256,6 +256,50 @@ check("predictor.PENNY_HIT_THRESHOLD_PCT == 25",
       ml_predictor.PENNY_HIT_THRESHOLD_PCT == 25.0)
 
 
+# ── 15. Per-track ML thresholds ────────────────────────────────────────
+print("\n[15] Per-track ML thresholds")
+check("CRYPTO_HIT_THRESHOLD_PCT == 15",  ml_predictor.CRYPTO_HIT_THRESHOLD_PCT  == 15.0)
+check("OPTIONS_HIT_THRESHOLD_PCT == 50", ml_predictor.OPTIONS_HIT_THRESHOLD_PCT == 50.0)
+check("_hit_threshold_for stock",   ml_predictor._hit_threshold_for({"track": "stock"})   == 20.0)
+check("_hit_threshold_for crypto",  ml_predictor._hit_threshold_for({"track": "crypto"})  == 15.0)
+check("_hit_threshold_for penny",   ml_predictor._hit_threshold_for({"is_penny": True})   == 25.0)
+check("_hit_threshold_for options", ml_predictor._hit_threshold_for({"track": "options"}) == 50.0)
+
+
+# ── 16. fetch_crypto_overview surface ──────────────────────────────────
+print("\n[16] fetch_crypto_overview")
+import engine as _eng_smoke
+_cov = _eng_smoke.fetch_crypto_overview()
+check("fetch_crypto_overview returns dict", isinstance(_cov, dict))
+check("fetch_crypto_overview has _ok key", "_ok" in _cov)
+
+
+# ── 17. recommend_option skips when win_prob < 60 ──────────────────────
+print("\n[17] recommend_option gate checks")
+_low_signal = {"win_prob": 55, "signal": "WATCH", "price": 100, "entry": 100,
+               "t1_price": 110, "rr": {"t1": 110}}
+_orec_skip = _eng_smoke.recommend_option("AAPL", _low_signal, 10000.0)
+check("recommend_option skips win_prob<60",
+      _orec_skip is not None and "skip_reason" in _orec_skip)
+
+
+# ── 18. Notifier: crypto + options templates surface ───────────────────
+print("\n[18] Crypto + options notifier surface")
+check("send_crypto_momentum_email present", hasattr(notifier, "send_crypto_momentum_email"))
+check("tg_crypto_momentum present",         hasattr(notifier, "tg_crypto_momentum"))
+check("send_options_recommendation_email present",
+      hasattr(notifier, "send_options_recommendation_email"))
+check("tg_options_recommendation present", hasattr(notifier, "tg_options_recommendation"))
+
+# Verify crypto email renders without crashing (no picks → returns False cleanly)
+ok_ce, _ = notifier.send_crypto_momentum_email([])
+check("crypto email empty-list returns False", ok_ce is False)
+
+# Verify options TG renders for a skip_reason rec (returns False cleanly)
+ok_ot, _ = notifier.tg_options_recommendation({"skip_reason": "test"})
+check("options TG skip_reason returns False", ok_ot is False)
+
+
 # ── Summary ────────────────────────────────────────────────────────────
 print(f"\n{'='*48}\nSMOKE TEST: {_passed} passed, {_failed} failed\n{'='*48}")
 sys.exit(1 if _failed else 0)

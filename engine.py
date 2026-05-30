@@ -90,6 +90,9 @@ _KRAKEN_PAIRS = {
     "AVAX-USD": "AVAXUSD",
     "MATIC-USD":"MATICUSD",
     "ATOM-USD": "ATOMUSD",
+    "NEAR-USD": "NEARUSD",
+    "UNI-USD":  "UNIUSD",
+    "ALGO-USD": "ALGOUSD",
 }
 
 def _download_kraken(symbol: str, period: str = "1y") -> pd.DataFrame | None:
@@ -119,6 +122,51 @@ def _download_kraken(symbol: str, period: str = "1y") -> pd.DataFrame | None:
         return df if len(df) >= 10 else None
     except Exception:
         return None
+
+
+# ── Crypto market regime overview (CoinGecko + alternative.me, no key) ─
+
+def fetch_crypto_overview() -> dict:
+    """BTC dominance, Fear & Greed Index, BTC volume regime. All free, no auth.
+    Returns _ok=False on network failure so the UI degrades gracefully."""
+    out = {"btc_dominance": None, "fear_greed": None, "fg_label": None,
+           "btc_vol_regime": None, "btc_above_50dma": None, "btc_pct_50dma": None,
+           "_ok": False}
+    try:
+        cg = requests.get("https://api.coingecko.com/api/v3/global", timeout=8)
+        if cg.status_code == 200:
+            data = cg.json().get("data", {})
+            dom = data.get("market_cap_percentage", {}).get("btc")
+            if dom is not None:
+                out["btc_dominance"] = round(float(dom), 1)
+    except Exception:
+        pass
+    try:
+        fg = requests.get("https://api.alternative.me/fng/?limit=1", timeout=8)
+        if fg.status_code == 200:
+            entry = fg.json().get("data", [{}])[0]
+            val = int(entry.get("value", 0))
+            out["fear_greed"] = val
+            out["fg_label"]   = entry.get("value_classification", "")
+    except Exception:
+        pass
+    try:
+        df_btc = _download_kraken("BTC-USD", period="3mo")
+        if df_btc is not None and len(df_btc) >= 50:
+            close = df_btc["Close"].squeeze()
+            vol   = df_btc["Volume"].squeeze()
+            ma50  = float(close.rolling(50).mean().iloc[-1])
+            price = float(close.iloc[-1])
+            out["btc_above_50dma"] = price > ma50
+            out["btc_pct_50dma"]   = round((price / ma50 - 1) * 100, 1)
+            vol_avg20 = float(vol.iloc[-21:-1].mean()) if len(vol) > 21 else float(vol.mean())
+            vol_today = float(vol.iloc[-1])
+            ratio = vol_today / vol_avg20 if vol_avg20 > 0 else 1.0
+            out["btc_vol_regime"] = "HIGH" if ratio >= 1.5 else "LOW" if ratio < 0.7 else "NORMAL"
+    except Exception:
+        pass
+    out["_ok"] = any(v is not None for v in [out["btc_dominance"], out["fear_greed"]])
+    return out
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -596,6 +644,7 @@ def analyze_ticker(ticker: str, mc: dict, bm_df: pd.DataFrame | None,
         "is_overbought":   is_overbought,
         "is_extended":     is_extended,
         "extension_pct":   extension_pct,
+        "track":           "crypto" if is_crypto_t else "stock",
         "_df":             df,
     }
 
@@ -866,6 +915,198 @@ def fetch_options(ticker: str) -> dict:
         }
     except Exception as e:
         return {"error": str(e)}
+
+
+# ── Actionable options trade recommendation ───────────────────────────
+
+def recommend_option(ticker: str, stock_signal: dict, portfolio: float,
+                     risk_pct: float = 2.0) -> dict | None:
+    """Turn a stock signal into a concrete options trade recommendation.
+
+    Returns None when the setup doesn't qualify:
+    - win_prob < 60 (insufficient edge)
+    - VIX > 30 (premiums too expensive)
+    - no options chain available for the ticker
+    - earnings fall inside the contract window
+    """
+    from datetime import datetime, date
+    import math
+
+    win_prob = stock_signal.get("win_prob", 0)
+    signal   = stock_signal.get("signal", "")
+    t1_price = stock_signal.get("t1_price") or stock_signal.get("rr", {}).get("t1")
+    cur_price = stock_signal.get("price") or stock_signal.get("entry")
+
+    if win_prob < 60:
+        return {"skip_reason": f"win_prob {win_prob}% < 60 — insufficient edge for options"}
+
+    # direction
+    is_bearish = signal in ("SELL", "SELL TODAY", "DO NOT BUY")
+    direction  = "PUT" if is_bearish else "CALL"
+
+    # VIX gate
+    try:
+        vix_data = fetch_vix()
+        if vix_data.get("level", 0) > 30:
+            return {"skip_reason": f"VIX {vix_data['level']:.1f} > 30 — premiums too expensive"}
+    except Exception:
+        pass
+
+    try:
+        t    = yf.Ticker(ticker)
+        exps = t.options
+        if not exps:
+            return {"skip_reason": "No options listed for this ticker"}
+
+        today = datetime.today()
+
+        # pick nearest expiry with 30-50 DTE
+        exp = None
+        for e in exps:
+            dte = (datetime.strptime(e, "%Y-%m-%d") - today).days
+            if 30 <= dte <= 50:
+                exp = e
+                break
+        if exp is None:
+            # fallback: nearest >= 25 DTE
+            for e in exps:
+                if (datetime.strptime(e, "%Y-%m-%d") - today).days >= 25:
+                    exp = e
+                    break
+        if exp is None:
+            return {"skip_reason": "No expiry with ≥25 DTE available"}
+
+        dte = (datetime.strptime(exp, "%Y-%m-%d") - today).days
+
+        # earnings check
+        earnings_in_window = False
+        try:
+            cal = t.calendar
+            if cal is not None:
+                earn_col = "Earnings Date" if "Earnings Date" in cal else None
+                if earn_col:
+                    earn_dates = cal[earn_col]
+                    earn_dates = [earn_dates] if not hasattr(earn_dates, "__iter__") else list(earn_dates)
+                    exp_date = datetime.strptime(exp, "%Y-%m-%d").date()
+                    for ed in earn_dates:
+                        try:
+                            ed_d = ed.date() if hasattr(ed, "date") else date.fromisoformat(str(ed)[:10])
+                            if date.today() <= ed_d <= exp_date:
+                                earnings_in_window = True
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
+        chain     = t.option_chain(exp)
+        contracts = chain.calls if direction == "CALL" else chain.puts
+
+        if contracts.empty:
+            return {"skip_reason": f"No {direction} contracts found for {exp}"}
+
+        # current price
+        info  = t.info or {}
+        price = float(info.get("regularMarketPrice") or cur_price or
+                      contracts["strike"].median())
+
+        # strike selection
+        contracts = contracts.copy()
+        contracts["d"] = (contracts["strike"] - price).abs()
+        contracts_sorted = contracts.sort_values("d")
+
+        if win_prob >= 70:
+            # slightly OTM — next strike beyond current price
+            if direction == "CALL":
+                otm = contracts[contracts["strike"] > price].sort_values("strike")
+            else:
+                otm = contracts[contracts["strike"] < price].sort_values("strike", ascending=False)
+            row = otm.iloc[0] if len(otm) > 0 else contracts_sorted.iloc[0]
+        else:
+            row = contracts_sorted.iloc[0]  # ATM
+
+        strike      = float(row["strike"])
+        bid         = float(row.get("bid", 0))
+        ask         = float(row.get("ask", 0))
+        entry_prem  = ask if ask > 0 else bid
+        if entry_prem <= 0:
+            return {"skip_reason": "Contract has no valid ask price (illiquid)"}
+
+        delta_raw = float(row.get("delta", 0)) if "delta" in row.index else None
+        if delta_raw is None or delta_raw == 0:
+            # fallback delta estimate: ATM ≈ 0.50, OTM ≈ 0.35
+            delta_raw = 0.50 if abs(strike - price) / price < 0.03 else 0.35
+        delta = abs(delta_raw)
+
+        theta = float(row.get("theta", 0)) if "theta" in row.index else None
+        vega  = float(row.get("vega",  0)) if "vega"  in row.index else None
+        iv    = round(float(row.get("impliedVolatility", 0)) * 100, 1)
+
+        # IV percentile (30-day approximation from chain IV spread)
+        try:
+            all_ivs = contracts["impliedVolatility"].dropna() * 100
+            iv_min  = float(all_ivs.min())
+            iv_max  = float(all_ivs.max())
+            iv_pct  = (iv - iv_min) / (iv_max - iv_min) if iv_max > iv_min else 0.5
+            iv_label = "HIGH" if iv_pct >= 0.70 else "LOW" if iv_pct <= 0.30 else "NORMAL"
+        except Exception:
+            iv_label = "NORMAL"
+
+        # exit target using delta approximation
+        if t1_price and cur_price:
+            stock_move  = (t1_price - price) if direction == "CALL" else (price - t1_price)
+            prem_target = round(entry_prem + delta * stock_move, 2)
+        else:
+            prem_target = round(entry_prem * 2.0, 2)  # rough 2× target
+
+        prem_stop = round(entry_prem * 0.50, 2)
+
+        # breakeven stock price
+        breakeven = round(strike + entry_prem, 2) if direction == "CALL" else round(strike - entry_prem, 2)
+
+        # position sizing: max 2% of portfolio per trade
+        max_risk_dollars = portfolio * (risk_pct / 100)
+        n_contracts = max(1, int(math.floor(max_risk_dollars / (entry_prem * 100))))
+        actual_risk  = round(n_contracts * entry_prem * 100, 2)
+
+        pnl_pct = round((prem_target - entry_prem) / entry_prem * 100, 1) if entry_prem > 0 else 0
+
+        # verdict sentence
+        parts = [
+            f"{'ATM' if win_prob < 70 else 'OTM'} {direction.lower()} on {ticker} "
+            f"({signal}; {win_prob}% confidence).",
+            f"Target premium +{pnl_pct}% if stock reaches {stock_signal.get('currency','$')}{t1_price}.",
+        ]
+        if earnings_in_window:
+            parts.append("⚠ Earnings fall inside contract window — binary risk.")
+        if iv_label == "HIGH":
+            parts.append("⚠ IV elevated — premium is rich; consider waiting for IV dip.")
+        if theta:
+            parts.append(f"Theta decay: {stock_signal.get('currency','$')}{abs(theta):.2f}/day.")
+
+        return {
+            "ticker":             ticker,
+            "direction":          direction,
+            "strike":             strike,
+            "expiry":             exp,
+            "dte":                dte,
+            "premium_entry":      round(entry_prem, 2),
+            "premium_target":     prem_target,
+            "premium_stop":       prem_stop,
+            "breakeven_stock":    breakeven,
+            "contracts":          n_contracts,
+            "max_risk_usd":       actual_risk,
+            "delta":              round(delta, 2),
+            "theta":              round(theta, 3) if theta else None,
+            "vega":               round(vega,  3) if vega  else None,
+            "iv":                 iv,
+            "iv_label":           iv_label,
+            "earnings_in_window": earnings_in_window,
+            "pnl_pct_at_t1":     pnl_pct,
+            "verdict":            " ".join(parts),
+            "track":              "options",
+        }
+    except Exception as e:
+        return {"skip_reason": f"Options fetch error: {str(e)[:80]}"}
 
 
 # ══════════════════════════════════════════════════════════════════════

@@ -93,12 +93,11 @@ MARKET_CONFIGS = {
         "has_sectors": False,
         "is_crypto":   True,
         "blue_chips": [
-            "BTC-USD","ETH-USD","BNB-USD","XRP-USD",
-            "ADA-USD","DOT-USD","LINK-USD","LTC-USD",
+            "BTC-USD","ETH-USD","BNB-USD","XRP-USD","SOL-USD","ADA-USD",
         ],
         "growth": [
-            "SOL-USD","AVAX-USD","LINK-USD","DOGE-USD",
-            "INJ-USD","RENDER-USD","FET-USD","WIF-USD",
+            "AVAX-USD","DOGE-USD","DOT-USD","LINK-USD","LTC-USD",
+            "MATIC-USD","ATOM-USD","NEAR-USD","UNI-USD","ALGO-USD",
         ],
         "default": ["BTC-USD","ETH-USD","SOL-USD","XRP-USD","BNB-USD","AVAX-USD"],
     },

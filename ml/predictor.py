@@ -34,8 +34,10 @@ import mldb
 log = get_logger("aarya_predictor")
 
 HORIZON_DAYS                   = 10
-HIT_THRESHOLD_PCT              = 20.0     # stretch goal — same as deploy gate
+HIT_THRESHOLD_PCT              = 20.0     # stock default
 PENNY_HIT_THRESHOLD_PCT        = 25.0     # higher bar: 20% is noise for pennies
+CRYPTO_HIT_THRESHOLD_PCT       = 15.0     # crypto is choppier; 15% is meaningful
+OPTIONS_HIT_THRESHOLD_PCT      = 50.0     # options trades target +50% premium
 SOFT_HIT_PCT                   = 5.0
 MIN_EVALUATED_FOR_TRAINING     = 30
 
@@ -80,6 +82,17 @@ def _pred_to_row(pred: dict) -> dict:
     }
 
 
+# ── Per-track hit threshold ───────────────────────────────────────────
+
+def _hit_threshold_for(payload: dict) -> float:
+    """Return the MFE hit threshold for a prediction payload based on its track."""
+    track = (payload or {}).get("track", "stock")
+    if track == "options": return OPTIONS_HIT_THRESHOLD_PCT
+    if track == "crypto":  return CRYPTO_HIT_THRESHOLD_PCT
+    if (payload or {}).get("is_penny") or track == "penny": return PENNY_HIT_THRESHOLD_PCT
+    return HIT_THRESHOLD_PCT
+
+
 # ── Outcome evaluation ────────────────────────────────────────────────
 
 def evaluate_open_predictions() -> tuple[int, int, int]:
@@ -106,10 +119,9 @@ def evaluate_open_predictions() -> tuple[int, int, int]:
             high_after  = float(sub["High"].iloc[1:].max()) if len(sub) > 1 else final_close
             mfe         = (high_after  - entry) / entry * 100   # max favourable excursion
             outcome_pct = round((final_close - entry) / entry * 100, 2)
-            # Penny picks need 25% MFE to count as a hit (20% is noise for them)
-            is_penny    = bool((r.get("payload") or r).get("is_penny"))
-            hit_bar     = PENNY_HIT_THRESHOLD_PCT if is_penny else HIT_THRESHOLD_PCT
-            hit         = mfe >= hit_bar
+            payload  = r.get("payload") or r
+            hit_bar  = _hit_threshold_for(payload)
+            hit      = mfe >= hit_bar
             soft        = mfe >= SOFT_HIT_PCT
             if mldb.update_prediction_outcome(r["id"], outcome_pct, hit):
                 n += 1

@@ -998,5 +998,125 @@ def tg_penny_momentum(picks: list, chat_id: str = "") -> tuple[bool, str]:
             f"Vol: {p.get('vol_ratio',1):.1f}x | RSI: {_esc(p.get('rsi','—'))}"
             f"\nT1: {cur}{_esc(rr.get('t1','—'))} (+25%) | Stop: {cur}{_esc(p.get('stop','—'))}"
         )
-    lines.append("\n⚠️ <i>Penny stocks = high risk. Size small. Not financial advice.</i>")
+    lines.append("\n&#9888; <i>Penny stocks = high risk. Size small. Not financial advice.</i>")
     return send_telegram("\n".join(lines), chat_id)
+
+
+# ── CRYPTO MOMENTUM (proactive daily digest) ───────────────────────────
+
+def send_crypto_momentum_email(picks: list) -> tuple[bool, str]:
+    """Daily proactive email: top crypto momentum setups."""
+    if not picks:
+        return False, "no picks"
+    top = picks[:5]
+    rows = ""
+    for p in top:
+        cur = p.get("currency", "$")
+        rr  = p.get("rr", {})
+        rows += (
+            f"<div style='background:#0a1525;border:1px solid #4A7FA5;"
+            f"border-radius:8px;padding:10px 14px;margin-bottom:8px;'>"
+            f"<div style='display:flex;justify-content:space-between;'>"
+            f"<b style='color:#fff;font-size:14px;'>{p['ticker']}</b>"
+            f"<span style='background:#4A7FA5;color:#050d15;font-size:10px;"
+            f"font-weight:700;padding:2px 8px;border-radius:8px;'>{p.get('signal','')}</span></div>"
+            f"<div style='color:#C9D6E3;font-size:12px;margin-top:4px;'>{p.get('verdict','')[:180]}</div>"
+            f"<div style='display:grid;grid-template-columns:repeat(4,1fr);gap:4px;"
+            f"margin-top:6px;font-size:12px;'>"
+            f"<div><div style='color:#4A7FA5;font-size:10px;'>Price</div>"
+            f"<div style='color:#fff;'>{cur}{p.get('price','—')}</div></div>"
+            f"<div><div style='color:#4A7FA5;font-size:10px;'>Stop</div>"
+            f"<div style='color:#FF4D6A;'>{cur}{p.get('stop','—')}</div></div>"
+            f"<div><div style='color:#4A7FA5;font-size:10px;'>T1</div>"
+            f"<div style='color:#FFB340;'>{cur}{rr.get('t1','—')}</div></div>"
+            f"<div><div style='color:#4A7FA5;font-size:10px;'>Win%</div>"
+            f"<div style='color:#1D9E75;'>{p.get('win_prob','?')}%</div></div>"
+            f"</div></div>"
+        )
+    body  = (f"<p style='color:#C9D6E3;'>Top {len(top)} crypto momentum setups today. "
+             f"Kraken real-time data. High volatility — size positions carefully.</p>" + rows)
+    html  = _wrap("Crypto Momentum Picks", "#4A7FA5", body)
+    tickers = ", ".join(p["ticker"] for p in top)
+    return send_alert(f"[Aarya] Crypto Momentum: {tickers}", html)
+
+
+def tg_crypto_momentum(picks: list, chat_id: str = "") -> tuple[bool, str]:
+    """Telegram digest for proactive crypto momentum picks."""
+    if not picks:
+        return False, "no picks"
+    lines = ["<b>Crypto Momentum Picks</b>"]
+    for p in picks[:5]:
+        cur = p.get("currency", "$")
+        rr  = p.get("rr", {})
+        lines.append(
+            f"\n<b>{p['ticker']}</b> — {p.get('signal','')} | "
+            f"{cur}{p.get('price','?')} | Stop {cur}{p.get('stop','?')} | "
+            f"T1 {cur}{rr.get('t1','?')} | Win {p.get('win_prob','?')}%"
+        )
+    lines.append("\n<i>Kraken data. Not financial advice.</i>")
+    return send_telegram("\n".join(lines), chat_id)
+
+
+# ── OPTIONS RECOMMENDATION (email + Telegram) ─────────────────────────
+
+def send_options_recommendation_email(rec: dict) -> tuple[bool, str]:
+    """Email a single high-quality options recommendation."""
+    if not rec or "skip_reason" in rec:
+        return False, rec.get("skip_reason", "no rec") if rec else "no rec"
+    cur  = "$"
+    body = (
+        f"<div style='background:#0a1525;border:2px solid "
+        f"{'#1D9E75' if rec['direction']=='CALL' else '#FF4D6A'};"
+        f"border-radius:10px;padding:14px 18px;'>"
+        f"<div style='font-size:16px;font-weight:900;color:#fff;margin-bottom:10px;'>"
+        f"{rec['ticker']} {rec['direction']} — {rec['expiry']} ({rec['dte']} DTE)</div>"
+        f"<div style='display:grid;grid-template-columns:repeat(2,1fr);gap:8px;font-size:13px;'>"
+        f"<div><span style='color:#4A7FA5;'>Contract</span><br>"
+        f"<b>{cur}{rec['strike']:.2f} {rec['direction']}</b></div>"
+        f"<div><span style='color:#4A7FA5;'>Entry Premium</span><br>"
+        f"<b>{cur}{rec['premium_entry']:.2f}</b></div>"
+        f"<div><span style='color:#4A7FA5;'>Target Premium</span><br>"
+        f"<b style='color:#1D9E75;'>{cur}{rec['premium_target']:.2f} "
+        f"(+{rec['pnl_pct_at_t1']:.0f}%)</b></div>"
+        f"<div><span style='color:#4A7FA5;'>Stop Premium</span><br>"
+        f"<b style='color:#FF4D6A;'>{cur}{rec['premium_stop']:.2f} (-50%)</b></div>"
+        f"<div><span style='color:#4A7FA5;'>Contracts / Risk</span><br>"
+        f"<b>{rec['contracts']} contracts | max {cur}{rec['max_risk_usd']:,.0f}</b></div>"
+        f"<div><span style='color:#4A7FA5;'>Breakeven Stock</span><br>"
+        f"<b>{cur}{rec['breakeven_stock']:.2f}</b></div>"
+        f"</div>"
+        f"<div style='margin-top:10px;font-size:12px;color:#C9D6E3;'>"
+        + (f"Greeks: Delta {rec['delta']:.2f}"
+           + (f" | Theta {rec['theta']:.3f}/day" if rec.get("theta") else "")
+           + f" | IV {rec['iv']:.1f}% ({rec.get('iv_label','NORMAL')})"
+           + ("  EARNINGS IN WINDOW" if rec.get("earnings_in_window") else ""))
+        + "</div>"
+        f"<div style='margin-top:8px;font-size:12px;color:#C9D6E3;line-height:1.5;'>"
+        f"{rec.get('verdict','')}</div>"
+        f"</div>"
+        f"<p style='font-size:11px;color:#4A7FA5;margin-top:10px;'>"
+        f"Options involve significant risk. Planning tool only. Verify live prices before trading.</p>"
+    )
+    html = _wrap(f"Options Trade: {rec['ticker']} {rec['direction']}", "#1D9E75", body)
+    return send_alert(f"[Aarya] Options: {rec['ticker']} {rec['direction']} {rec['expiry']}", html)
+
+
+def tg_options_recommendation(rec: dict, chat_id: str = "") -> tuple[bool, str]:
+    """Telegram message for an options recommendation."""
+    if not rec or "skip_reason" in rec:
+        return False, rec.get("skip_reason", "no rec") if rec else "no rec"
+    cur  = "$"
+    earn = " EARNINGS IN WINDOW" if rec.get("earnings_in_window") else ""
+    msg  = (
+        f"<b>Options Trade: {rec['ticker']} {rec['direction']}</b>\n"
+        f"Contract: <b>{cur}{rec['strike']:.2f} {rec['direction']}</b> "
+        f"exp {rec['expiry']} ({rec['dte']}DTE)\n"
+        f"Entry: <b>{cur}{rec['premium_entry']:.2f}</b>  "
+        f"Target: <b>{cur}{rec['premium_target']:.2f} (+{rec['pnl_pct_at_t1']:.0f}%)</b>\n"
+        f"Stop: {cur}{rec['premium_stop']:.2f} (-50%)  "
+        f"Breakeven: {cur}{rec['breakeven_stock']:.2f}\n"
+        f"Size: {rec['contracts']} contracts | max risk {cur}{rec['max_risk_usd']:,.0f}\n"
+        f"Delta {rec['delta']:.2f} | IV {rec['iv']:.1f}% ({rec.get('iv_label','NORMAL')}){earn}\n\n"
+        f"<i>{rec.get('verdict','')[:200]}</i>"
+    )
+    return send_telegram(msg, chat_id)

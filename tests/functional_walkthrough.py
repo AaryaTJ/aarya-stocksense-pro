@@ -199,12 +199,56 @@ import auth as _auth
 check("request_password_reset exists",
       lambda: callable(_auth.request_password_reset))
 def _reset_shape():
-    # Must return (bool, str) even when Supabase is not available
     ok, msg = _auth.request_password_reset("test@example.com")
     assert isinstance(ok, bool), f"ok is not bool: {ok!r}"
     assert isinstance(msg, str) and len(msg) > 0, f"msg is empty: {msg!r}"
     return True
 check("request_password_reset returns (bool, str)", _reset_shape)
+
+# ── Crypto overview + expanded Kraken pairs ────────────────────────────
+print("\n[Crypto] fetch_crypto_overview and Kraken expansion")
+def _cov_surface():
+    cov = eng.fetch_crypto_overview()
+    assert isinstance(cov, dict), "not a dict"
+    assert "_ok" in cov, "missing _ok key"
+    return True
+check("fetch_crypto_overview() surface", _cov_surface)
+check("NEAR-USD in _KRAKEN_PAIRS", lambda: "NEAR-USD" in eng._KRAKEN_PAIRS)
+check("UNI-USD in _KRAKEN_PAIRS",  lambda: "UNI-USD"  in eng._KRAKEN_PAIRS)
+check("ALGO-USD in _KRAKEN_PAIRS", lambda: "ALGO-USD" in eng._KRAKEN_PAIRS)
+
+mc_crypto = MARKET_CONFIGS["₿ Crypto"]
+def _crypto_no_dupe():
+    bl = mc_crypto["blue_chips"]
+    gr = mc_crypto["growth"]
+    combined = bl + gr
+    assert len(combined) == len(set(combined)), f"duplicates found: {combined}"
+    return True
+check("crypto config has no duplicate tickers", _crypto_no_dupe)
+
+# ── recommend_option gate ─────────────────────────────────────────────
+print("\n[Options] recommend_option gate + shape")
+def _orec_low():
+    rec = eng.recommend_option("AAPL", {"win_prob": 50, "signal": "WATCH",
+                                         "price": 100, "entry": 100,
+                                         "t1_price": 110, "rr": {"t1": 110}}, 10000.0)
+    assert rec is not None and "skip_reason" in rec, f"Expected skip, got: {rec}"
+    return True
+check("recommend_option skips win_prob<60", _orec_low)
+
+def _orec_shape():
+    # With a BUY signal and win_prob=75, it should either recommend or give a clear skip reason
+    rec = eng.recommend_option("AAPL", {"win_prob": 75, "signal": "BUY TODAY",
+                                         "price": 200, "entry": 200,
+                                         "t1_price": 216, "rr": {"t1": 216},
+                                         "currency": "$"}, 10000.0)
+    assert rec is not None, "recommend_option returned None"
+    if "skip_reason" not in rec:
+        for key in ("ticker", "direction", "strike", "expiry", "premium_entry",
+                    "premium_target", "premium_stop", "contracts", "delta"):
+            assert key in rec, f"missing key: {key}"
+    return True
+check("recommend_option(AAPL) returns valid shape", _orec_shape)
 
 print(f"\n{'='*56}")
 print(f"FUNCTIONAL WALKTHROUGH: {_pass} passed, {_fail} failed")

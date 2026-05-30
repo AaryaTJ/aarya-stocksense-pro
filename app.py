@@ -456,6 +456,47 @@ def tab_picks(cfg, market):
             st.info("Enable the toggle above to see stock signals despite the bear regime. High risk — use position sizing carefully.")
             return
 
+    # ── 🌐 Crypto Market Dashboard (CRYPTO market only) ───────────────────
+    if mc.get("is_crypto"):
+        try:
+            with st.spinner("Loading crypto market data…"):
+                _cov = eng.fetch_crypto_overview()
+        except Exception:
+            _cov = {"_ok": False}
+        if _cov.get("_ok"):
+            _fg    = _cov.get("fear_greed")
+            _fg_lbl = _cov.get("fg_label", "")
+            _fg_col = ("#FF4D6A" if _fg is not None and _fg <= 30 else
+                       "#FFB340" if _fg is not None and _fg <= 50 else
+                       "#1D9E75" if _fg is not None and _fg >= 70 else "#4A7FA5")
+            _dom   = _cov.get("btc_dominance")
+            _above = _cov.get("btc_above_50dma")
+            _pct   = _cov.get("btc_pct_50dma", 0)
+            _vol_r = _cov.get("btc_vol_regime", "—")
+            _vol_col = "#1D9E75" if _vol_r == "HIGH" else "#FF4D6A" if _vol_r == "LOW" else "#4A7FA5"
+            _above_str = (f"{'ABOVE' if _above else 'BELOW'} 50dMA ({_pct:+.1f}%)"
+                          if _above is not None else "—")
+            card(
+                f"<div style='background:#0a1525;border:1px solid #4A7FA5;"
+                f"border-radius:10px;padding:12px 18px;margin-bottom:14px;'>"
+                f"<div style='color:#C9D6E3;font-size:13px;font-weight:700;margin-bottom:8px;'>"
+                f"🌐 Crypto Market Regime</div>"
+                f"<div style='display:grid;grid-template-columns:repeat(4,1fr);gap:8px;font-size:12px;'>"
+                f"<div><div style='color:#4A7FA5;font-size:10px;'>BTC Dominance</div>"
+                f"<div style='color:#fff;font-weight:700;'>{f'{_dom:.1f}%' if _dom else '—'}</div></div>"
+                f"<div><div style='color:#4A7FA5;font-size:10px;'>Fear & Greed</div>"
+                f"<div style='color:{_fg_col};font-weight:700;'>"
+                f"{f'{_fg} ({_fg_lbl})' if _fg is not None else '—'}</div></div>"
+                f"<div><div style='color:#4A7FA5;font-size:10px;'>BTC vs 50dMA</div>"
+                f"<div style='color:#{'1D9E75' if _above else 'FF4D6A'};font-weight:700;'>"
+                f"{_above_str}</div></div>"
+                f"<div><div style='color:#4A7FA5;font-size:10px;'>24h Vol Regime</div>"
+                f"<div style='color:{_vol_col};font-weight:700;'>{_vol_r}</div></div>"
+                f"</div></div>"
+            )
+        else:
+            st.caption("🌐 Live crypto regime data temporarily unavailable — showing signals only.")
+
     buy   = [r for r in results if r["signal"]=="BUY TODAY"]
     prep  = [r for r in results if r["signal"]=="PREPARE TO BUY"]
     watch = [r for r in results if r["signal"]=="WATCH"]
@@ -1209,6 +1250,70 @@ def tab_checker(cfg, market):
 
     # Options
     if not mc.get("is_crypto"):
+        # ── 🎯 Options Trade Recommendation ──────────────────────────────
+        st.markdown("#### 🎯 Options Trade Recommendation")
+        if r:
+            try:
+                with st.spinner("Calculating options recommendation…"):
+                    _orec = eng.recommend_option(ticker, r, cfg["portfolio"], cfg.get("risk_pct", 2.0))
+            except Exception as _ore:
+                _orec = {"skip_reason": str(_ore)}
+        else:
+            _orec = {"skip_reason": "Run stock analysis first to get a recommendation."}
+
+        if not _orec or "skip_reason" in _orec:
+            st.info(f"⚪ {(_orec or {}).get('skip_reason', 'Recommendation not available.')}")
+        else:
+            _odir    = _orec["direction"]
+            _ocol    = "#1D9E75" if _odir == "CALL" else "#FF4D6A"
+            _iv_lbl  = _orec.get("iv_label", "NORMAL")
+            _iv_col  = "#FF4D6A" if _iv_lbl == "HIGH" else "#1D9E75" if _iv_lbl == "LOW" else "#4A7FA5"
+            _earn_warn = (" &#9888; <b style='color:#FFB340;'>Earnings in window</b>"
+                          if _orec.get("earnings_in_window") else "")
+            _delta_str = f"Delta {_orec['delta']:.2f}"
+            _theta_str = f"  Theta {_orec['theta']:.3f}/day" if _orec.get("theta") else ""
+            _vega_str  = f"  Vega {_orec['vega']:.3f}" if _orec.get("vega") else ""
+            card(
+                f"<div style='background:#0a1525;border:2px solid {_ocol};"
+                f"border-radius:10px;padding:14px 18px;margin-bottom:12px;'>"
+                f"<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;'>"
+                f"<span style='font-size:16px;font-weight:900;color:#fff;'>"
+                f"Target {ticker} {_odir}</span>"
+                f"<span style='background:{_ocol};color:#050d15;font-size:11px;"
+                f"font-weight:700;padding:3px 12px;border-radius:10px;'>{_odir}</span></div>"
+                f"<div style='display:grid;grid-template-columns:repeat(3,1fr);gap:8px;font-size:12px;margin-bottom:10px;'>"
+                f"<div><div style='color:#4A7FA5;font-size:10px;'>Contract</div>"
+                f"<div style='color:#fff;font-weight:700;'>{cur}{_orec['strike']:.2f} {_odir} "
+                f"{_orec['expiry']} ({_orec['dte']}DTE)</div></div>"
+                f"<div><div style='color:#4A7FA5;font-size:10px;'>Entry Premium</div>"
+                f"<div style='color:#fff;font-weight:700;'>{cur}{_orec['premium_entry']:.2f} / contract</div></div>"
+                f"<div><div style='color:#4A7FA5;font-size:10px;'>Position Size</div>"
+                f"<div style='color:#FFB340;font-weight:700;'>{_orec['contracts']} contracts "
+                f"(max {cur}{_orec['max_risk_usd']:,.0f})</div></div>"
+                f"</div>"
+                f"<div style='display:grid;grid-template-columns:repeat(3,1fr);gap:8px;font-size:12px;margin-bottom:10px;'>"
+                f"<div><div style='color:#4A7FA5;font-size:10px;'>Target Premium</div>"
+                f"<div style='color:#1D9E75;font-weight:700;'>{cur}{_orec['premium_target']:.2f} "
+                f"(+{_orec['pnl_pct_at_t1']:.0f}%)</div></div>"
+                f"<div><div style='color:#4A7FA5;font-size:10px;'>Stop Premium</div>"
+                f"<div style='color:#FF4D6A;font-weight:700;'>{cur}{_orec['premium_stop']:.2f} (-50%)</div></div>"
+                f"<div><div style='color:#4A7FA5;font-size:10px;'>Stock Breakeven</div>"
+                f"<div style='color:#FFB340;font-weight:700;'>{cur}{_orec['breakeven_stock']:.2f}</div></div>"
+                f"</div>"
+                f"<div style='background:#121e30;border-radius:6px;padding:8px 12px;font-size:11px;"
+                f"color:#C9D6E3;margin-bottom:8px;'>"
+                f"{_delta_str}{_theta_str}{_vega_str} &nbsp;|&nbsp; "
+                f"IV: {_orec['iv']:.1f}% "
+                f"<span style='color:{_iv_col};font-weight:700;'>({_iv_lbl})</span>"
+                f"{_earn_warn}</div>"
+                f"<div style='color:#C9D6E3;font-size:11px;line-height:1.5;'>"
+                f"{_orec.get('verdict','')}</div>"
+                f"</div>"
+            )
+            st.caption("Options involve significant risk. Planning tool only — "
+                       "verify live prices before placing any trade. US stocks only.")
+
+        # ── 📉 Options Chain Snapshot (raw data) ─────────────────────────
         with st.expander("📉 Options Chain Snapshot"):
             with st.spinner("Loading options…"):
                 opt = c_options(ticker)

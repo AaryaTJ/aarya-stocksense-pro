@@ -325,6 +325,36 @@ def check_penny_momentum(cfg: dict) -> list:
     return out[:5]
 
 
+# ── Crypto Momentum scan (proactive: top Kraken-confirmed crypto picks) ──
+
+def check_crypto_momentum(cfg: dict) -> list:
+    """Scans all crypto blue_chips + growth tickers via Kraken. Returns top 5
+    by win_prob, tagged with track='crypto' for ML differentiation."""
+    from config import MARKET_CONFIGS as _MC
+    mc = _MC.get("₿ Crypto")
+    if not mc:
+        return []
+    try:
+        regime = eng.check_regime(mc)
+    except Exception:
+        regime = {"_df": None}
+    tickers = list(dict.fromkeys(mc.get("blue_chips", []) + mc.get("growth", [])))
+    out = []
+    for t in tickers:
+        try:
+            r = eng.analyze_ticker(t, mc, regime.get("_df"),
+                                   cfg["portfolio"], cfg["risk_pct"])
+            if r and r.get("signal") in ("BUY TODAY", "PREPARE TO BUY"):
+                r["currency"]     = "$"
+                r["market_label"] = "Crypto"
+                out.append(r)
+        except Exception as e:
+            log.debug(f"Crypto momentum {t}: {e}")
+    out.sort(key=lambda r: r.get("win_prob", 0), reverse=True)
+    log.info(f"Crypto momentum: {len(out)} setups found across {len(tickers)} tickers.")
+    return out[:5]
+
+
 # ── High-Momentum Breakout scan ────────────────────────────────────────
 
 def check_momentum_breakouts(cfg: dict) -> list:
@@ -581,6 +611,41 @@ def run():
             except Exception:
                 pass
 
+    # ── Step 2c: Crypto momentum scan (proactive: Kraken-confirmed picks) ─
+    log.info("Step 2c: Scanning crypto momentum setups…")
+    crypto_mom = []
+    try:
+        crypto_mom = check_crypto_momentum(cfg)
+        log.info(f"Crypto momentum picks: {len(crypto_mom)}")
+    except Exception as e:
+        log.error(f"Crypto momentum scan failed: {e}")
+
+    if crypto_mom:
+        try:
+            ok, msg = _dedup_send(
+                "email_crypto_mom", "crypto_mom", f"email:crypto_mom:{today}",
+                lambda: notifier.send_crypto_momentum_email(crypto_mom))
+            log.info(f"Crypto momentum email: {'OK ' + msg if ok else 'FAIL ' + msg}")
+        except Exception as e:
+            log.error(f"Crypto momentum email error: {e}")
+        for cid in tg_chat_ids:
+            try:
+                ok, msg = _dedup_send(
+                    "tg_crypto_mom", "crypto_mom", f"tg:crypto_mom:{cid}:{today}",
+                    lambda: notifier.tg_crypto_momentum(crypto_mom, cid))
+                log.info(f"Crypto momentum Telegram -> {cid}: {'OK' if ok else 'FAIL ' + msg}")
+            except Exception as e:
+                log.error(f"Crypto momentum Telegram error ({cid}): {e}")
+    else:
+        log.info("No crypto momentum setups today.")
+
+    if mldb.available():
+        for p in crypto_mom:
+            try:
+                mldb.log_prediction(p)
+            except Exception:
+                pass
+
     # ── Momentum breakout alerts (one per ticker, deduped per day) ────
     for r in momentum:
         t = r.get("ticker", "?")
@@ -738,6 +803,7 @@ def run():
 
     log.info(f"Monitor run complete. {len(picks)} trend · {len(contrarian)} contrarian · "
              f"{len(spikes)} penny_spike · {len(penny_mom)} penny_mom · "
+             f"{len(crypto_mom)} crypto · "
              f"{len(momentum)} momentum · {n_alerts} sell · {len(trail_alerts)} trail.")
     log.info("=" * 60)
 
