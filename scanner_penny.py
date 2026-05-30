@@ -239,11 +239,11 @@ def scan_penny(mc: dict, regime: dict, portfolio: float,
 
     bm_df  = regime.get("_df")
     extras = mc.get("penny_extras", [])
-    base   = list(dict.fromkeys(mc.get("growth", []) + mc.get("blue_chips", []) + extras))
+    # penny_extras first — they're the curated sub-$10 names.
+    # growth + blue_chips added after so large-caps don't crowd out the real pennies.
+    base   = list(dict.fromkeys(extras + mc.get("growth", []) + mc.get("blue_chips", [])))
     cutoff = PENNY_THRESHOLD[market_key]
 
-    # Pre-filter: only scan tickers that are plausibly pennies (skip known large-caps)
-    # We still scan all because prices change, but cap to max_tickers for speed.
     tickers = base[:max_tickers]
 
     buys, watches, cautions = [], [], []
