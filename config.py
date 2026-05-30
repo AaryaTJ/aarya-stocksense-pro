@@ -85,11 +85,11 @@ MARKET_CONFIGS = {
         "is_crypto":   True,
         "blue_chips": [
             "BTC-USD","ETH-USD","BNB-USD","XRP-USD",
-            "ADA-USD","DOT-USD","MATIC-USD","LINK-USD",
+            "ADA-USD","DOT-USD","LINK-USD","LTC-USD",
         ],
         "growth": [
-            "SOL-USD","AVAX-USD","MATIC-USD","LINK-USD",
-            "INJ-USD","RNDR-USD","FET-USD","WIF-USD",
+            "SOL-USD","AVAX-USD","LINK-USD","DOGE-USD",
+            "INJ-USD","RENDER-USD","FET-USD","WIF-USD",
         ],
         "default": ["BTC-USD","ETH-USD","SOL-USD","XRP-USD","BNB-USD","AVAX-USD"],
     },
@@ -104,7 +104,7 @@ MARKET_CONFIGS = {
         "has_sectors": False,
         "is_crypto":   False,
         "blue_chips":  ["SHEL.L","AZN.L","HSBA.L","ULVR.L","BP.L","GSK.L","RIO.L","LLOY.L"],
-        "growth":      ["AUTO.L","EXPN.L","OCDO.L","WEIR.L","MANU.L"],
+        "growth":      ["AUTO.L","EXPN.L","OCDO.L","WEIR.L","BARC.L"],
         "default":     ["SHEL.L","AZN.L","HSBA.L","BP.L","GSK.L"],
     },
 

@@ -60,6 +60,30 @@ def css():
         [data-baseweb="tab"]{font-size:11px!important;padding:6px 8px!important}
         [data-testid="stAppViewContainer"] > section:first-child{padding:0.5rem!important}
         .block-container{padding:0.5rem 0.75rem!important;max-width:100vw!important}
+        /* Collapse our custom-HTML inline grids so cards reflow to 2 cols on phones */
+        div[style*="grid-template-columns:repeat(5,1fr)"]{
+            grid-template-columns:repeat(2,1fr)!important;gap:6px!important}
+        div[style*="grid-template-columns:repeat(4,1fr)"]{
+            grid-template-columns:repeat(2,1fr)!important;gap:6px!important}
+        div[style*="grid-template-columns:repeat(3,1fr)"]{
+            grid-template-columns:repeat(1,1fr)!important;gap:6px!important}
+        /* Shrink the big numbers inside cards so they don't overflow */
+        div[style*="font-size:22px"]{font-size:16px!important}
+        div[style*="font-size:20px"]{font-size:15px!important}
+        div[style*="font-size:18px"]{font-size:14px!important}
+        div[style*="font-size:24px"]{font-size:17px!important}
+        /* Tighter card padding on small screens */
+        div[style*="padding:14px 18px"]{padding:10px 12px!important}
+        div[style*="padding:12px 18px"]{padding:10px 12px!important}
+        div[style*="padding:14px 16px"]{padding:10px 12px!important}
+        /* Inline HTML tables — let them scroll horizontally rather than overflow */
+        table[style*="width:100%"]{display:block!important;overflow-x:auto!important;
+            max-width:100vw!important;white-space:nowrap!important}
+        /* Sidebar logo — cap on mobile so it doesn't dominate */
+        [data-testid="stSidebar"] img{max-width:160px!important}
+        /* Flex header bar (used in regime badge etc.) — wrap on small screens */
+        div[style*="display:flex"][style*="justify-content:space-between"]{
+            flex-wrap:wrap!important;gap:4px!important}
     }
     </style>""", unsafe_allow_html=True)
 
