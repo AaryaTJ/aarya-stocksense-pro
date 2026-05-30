@@ -11,10 +11,18 @@ import os
 import sys
 import traceback
 
+# Windows cp1252 terminals can't print flag emojis — force UTF-8 stdout.
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import engine as eng
 import scanner_contrarian
+import scanner_penny
 from ml import predictor as ml_predictor, backtest as ml_backtest
 from config import MARKET_CONFIGS, FUND_CATALOGUE
 
@@ -158,6 +166,45 @@ check("auto_suffix TCS for IN", lambda: eng.auto_suffix("TCS", "IN") == "TCS.NS"
 check("auto_suffix already-suffixed", lambda: eng.auto_suffix("RELIANCE.NS", "IN") == "RELIANCE.NS")
 check("auto_suffix crypto no-op", lambda: eng.auto_suffix("BTC-USD", "CRYPTO") == "BTC-USD")
 check("auto_suffix US no suffix", lambda: eng.auto_suffix("AAPL", "US") == "AAPL")
+
+# ── Penny scanner — contract check for US + India ─────────────────────
+print("\n[Penny Scanner] scan_penny on US + India")
+for market_name in ("🇺🇸 US Stocks", "🇮🇳 India NSE"):
+    mc_p = MARKET_CONFIGS[market_name]
+    def _penny(mc=mc_p, name=market_name):
+        out = scanner_penny.scan_penny(mc, {"_df": None}, 10000.0, 1.0)
+        assert isinstance(out, list), f"{name}: scan_penny did not return a list"
+        for r in out:
+            assert "ticker" in r, f"{name}: result missing 'ticker'"
+            assert "signal" in r, f"{name}: result missing 'signal'"
+            assert r.get("is_penny") is True, f"{name}: is_penny flag not set"
+            assert r.get("signal", "").startswith("PENNY"), (
+                f"{name}: unexpected signal vocabulary: {r['signal']}")
+        return True
+    check(f"scan_penny({mc_p['key']})", _penny)
+
+# ── Penny scanner returns [] for non-penny markets ─────────────────────
+print("\n[Penny Scanner] non-penny markets return empty list")
+for market_name in ("₿ Crypto", "🇬🇧 UK", "🇪🇺 Europe"):
+    mc_np = MARKET_CONFIGS[market_name]
+    def _no_penny(mc=mc_np):
+        out = scanner_penny.scan_penny(mc, {"_df": None}, 10000.0, 1.0)
+        assert out == [], f"Expected [] for {mc['key']}, got {len(out)} picks"
+        return True
+    check(f"scan_penny returns [] for {mc_np['key']}", _no_penny)
+
+# ── auth.request_password_reset surface check ─────────────────────────
+print("\n[Auth] request_password_reset function surface")
+import auth as _auth
+check("request_password_reset exists",
+      lambda: callable(_auth.request_password_reset))
+def _reset_shape():
+    # Must return (bool, str) even when Supabase is not available
+    ok, msg = _auth.request_password_reset("test@example.com")
+    assert isinstance(ok, bool), f"ok is not bool: {ok!r}"
+    assert isinstance(msg, str) and len(msg) > 0, f"msg is empty: {msg!r}"
+    return True
+check("request_password_reset returns (bool, str)", _reset_shape)
 
 print(f"\n{'='*56}")
 print(f"FUNCTIONAL WALKTHROUGH: {_pass} passed, {_fail} failed")

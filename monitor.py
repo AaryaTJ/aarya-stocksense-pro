@@ -35,6 +35,7 @@ import notifier
 import db
 import mldb
 import scanner_contrarian
+import scanner_penny
 from ml import predictor as ml_predictor
 from config import MARKET_CONFIGS
 from datetime import date as _date
@@ -293,6 +294,37 @@ def check_contrarian_picks(cfg: dict) -> list:
     return out
 
 
+# ── Penny Momentum scan (proactive, not just >29% spikes) ─────────────
+
+def check_penny_momentum(cfg: dict) -> list:
+    """
+    Proactive penny-momentum scan for US (< $10) and India (< ₹300).
+    Complements check_penny_spikes (reactive >29% same-day alerts).
+    Returns list of result dicts compatible with mldb.log_prediction.
+    """
+    out = []
+    for market_name, currency in (("🇺🇸 US Stocks", "$"), ("🇮🇳 India NSE", "₹")):
+        mc = MARKET_CONFIGS.get(market_name)
+        if not mc:
+            continue
+        try:
+            regime = eng.check_regime(mc)
+        except Exception:
+            regime = {"_df": None}
+        try:
+            picks = scanner_penny.scan_penny(mc, regime, cfg["portfolio"], cfg["risk_pct"])
+            for p in picks:
+                p["currency"]     = currency
+                p["market_label"] = market_name
+            out.extend(picks)
+        except Exception as e:
+            log.warning(f"Penny momentum scan failed for {market_name}: {e}")
+    # Top 5 by win_prob for digest
+    out.sort(key=lambda r: r.get("win_prob", 0), reverse=True)
+    log.info(f"Penny momentum: {len(out)} setups found across US + India.")
+    return out[:5]
+
+
 # ── High-Momentum Breakout scan ────────────────────────────────────────
 
 def check_momentum_breakouts(cfg: dict) -> list:
@@ -486,7 +518,7 @@ def run():
             except Exception as e:
                 log.error(f"Daily top-3 Telegram error ({cid}): {e}")
 
-    # ── Step 2: Penny spike scan ───────────────────────────────────────
+    # ── Step 2: Penny spike scan (reactive: >29% same-day) ────────────
     log.info("Step 2/3: Scanning for penny spikes…")
     spikes = []
     try:
@@ -511,7 +543,43 @@ def run():
             except Exception as e:
                 log.error(f"Penny spike Telegram error ({cid}): {e}")
     else:
-        log.info("No penny spikes today — penny email skipped.")
+        log.info("No penny spikes today — penny spike email skipped.")
+
+    # ── Step 2b: Penny momentum scan (proactive: top momentum setups) ──
+    log.info("Step 2b: Scanning penny momentum setups…")
+    penny_mom = []
+    try:
+        penny_mom = check_penny_momentum(cfg)
+        log.info(f"Penny momentum picks: {len(penny_mom)}")
+    except Exception as e:
+        log.error(f"Penny momentum scan failed: {e}")
+
+    if penny_mom:
+        try:
+            ok, msg = _dedup_send(
+                "email_penny_mom", "penny_mom", f"email:penny_mom:{today}",
+                lambda: notifier.send_penny_momentum_email(penny_mom))
+            log.info(f"Penny momentum email: {'✅ ' + msg if ok else '❌ ' + msg}")
+        except Exception as e:
+            log.error(f"Penny momentum email error: {e}")
+        for cid in tg_chat_ids:
+            try:
+                ok, msg = _dedup_send(
+                    "tg_penny_mom", "penny_mom", f"tg:penny_mom:{cid}:{today}",
+                    lambda: notifier.tg_penny_momentum(penny_mom, cid))
+                log.info(f"Penny momentum Telegram → {cid}: {'✅' if ok else '❌ ' + msg}")
+            except Exception as e:
+                log.error(f"Penny momentum Telegram error ({cid}): {e}")
+    else:
+        log.info("No penny momentum setups today.")
+
+    # Log penny picks to ML loop as well
+    if mldb.available():
+        for p in penny_mom:
+            try:
+                mldb.log_prediction(p)
+            except Exception:
+                pass
 
     # ── Momentum breakout alerts (one per ticker, deduped per day) ────
     for r in momentum:
@@ -669,8 +737,8 @@ def run():
             log.error(f"Weekly report failed: {e}")
 
     log.info(f"Monitor run complete. {len(picks)} trend · {len(contrarian)} contrarian · "
-             f"{len(spikes)} penny · {len(momentum)} momentum · "
-             f"{n_alerts} sell · {len(trail_alerts)} trail.")
+             f"{len(spikes)} penny_spike · {len(penny_mom)} penny_mom · "
+             f"{len(momentum)} momentum · {n_alerts} sell · {len(trail_alerts)} trail.")
     log.info("=" * 60)
 
 

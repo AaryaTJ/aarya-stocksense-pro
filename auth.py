@@ -3,9 +3,13 @@ Aarya StockSense Pro — auth.py
 User authentication and persistent session management.
 """
 
+import os
 import streamlit as st
 from datetime import datetime, timedelta
 from supabase_client import _get_client
+from applog import get_logger
+
+log = get_logger("aarya_auth")
 
 ADMIN_EMAILS = frozenset({
     "tjbarot316@gmail.com",
@@ -179,3 +183,46 @@ def _touch_last_login(user_id: str):
         ).eq("id", user_id).execute()
     except Exception:
         pass
+
+
+def _site_url() -> str:
+    """Return the deployed site URL for password-reset redirects."""
+    try:
+        url = st.secrets.get("SITE_URL", "")
+        if url:
+            return str(url)
+    except Exception:
+        pass
+    try:
+        cfg_path = os.path.join(os.path.dirname(__file__), "aarya_config.json")
+        if os.path.exists(cfg_path):
+            import json
+            with open(cfg_path) as f:
+                data = json.load(f)
+            url = data.get("site_url", "")
+            if url:
+                return str(url)
+    except Exception:
+        pass
+    return "https://aarya.streamlit.app"
+
+
+def request_password_reset(email: str) -> tuple[bool, str]:
+    """Trigger Supabase to send a password-reset link to the given email.
+
+    Always returns (True, message) — we never reveal whether the email exists,
+    which is standard practice to prevent account enumeration.
+    """
+    client = _get_client()
+    if not client:
+        return True, "If that email is registered, a reset link has been sent."
+    try:
+        client.auth.reset_password_for_email(
+            email.strip().lower(),
+            options={"redirect_to": _site_url()},
+        )
+        log.info(f"Password reset requested for {email.strip().lower()}")
+        return True, "Reset link sent. Check your email (and spam folder) — link expires in 1 hour."
+    except Exception as e:
+        log.warning(f"Password reset error for {email}: {e}")
+        return True, "If that email is registered, a reset link has been sent."

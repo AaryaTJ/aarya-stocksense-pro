@@ -41,15 +41,19 @@ def check(name, cond, detail=""):
 # ── 1. Imports ─────────────────────────────────────────────────────────
 print("\n[1] Module imports")
 import applog, engine as eng, notifier, mldb, db, monitor, config, auth  # noqa
-import scanner_contrarian, gemini_cache                                   # noqa
+import scanner_contrarian, scanner_penny, gemini_cache                    # noqa
 from ml import predictor as ml_predictor, backtest as ml_backtest, weekly_report  # noqa
 check("all core modules import", True)
 check("engine.portfolio_sentiment present", hasattr(eng, "portfolio_sentiment"))
 check("scanner_contrarian.scan_contrarian present", hasattr(scanner_contrarian, "scan_contrarian"))
+check("scanner_penny.scan_penny present", hasattr(scanner_penny, "scan_penny"))
 check("ml_predictor.score_prediction present", hasattr(ml_predictor, "score_prediction"))
 check("ml_backtest.check_deploy_gate present", hasattr(ml_backtest, "check_deploy_gate"))
 check("notifier.send_momentum_alert present", hasattr(notifier, "send_momentum_alert"))
 check("notifier.send_trail_stop_email present", hasattr(notifier, "send_trail_stop_email"))
+check("notifier.send_penny_momentum_email present", hasattr(notifier, "send_penny_momentum_email"))
+check("notifier.tg_penny_momentum present", hasattr(notifier, "tg_penny_momentum"))
+check("auth.request_password_reset present", hasattr(auth, "request_password_reset"))
 
 
 # ── 2. Market hours ────────────────────────────────────────────────────
@@ -192,6 +196,64 @@ check("run_backtest exists",        callable(ml_backtest.run_backtest))
 check("check_deploy_gate exists",   callable(ml_backtest.check_deploy_gate))
 check("backtest constants sane",
       ml_backtest.HIT_THRESHOLD == 20.0 and ml_backtest.HOLD_DAYS == 10)
+
+
+# ── 13. Penny scanner contract (offline — monkeypatched) ───────────────
+print("\n[13] Penny scanner contract")
+_orig_penny_analyze = scanner_penny.analyze_penny
+scanner_penny.analyze_penny = lambda *a, **k: None
+mc_us_p  = config.MARKET_CONFIGS["🇺🇸 US Stocks"]
+mc_uk_p  = config.MARKET_CONFIGS["🇬🇧 UK"]
+out_us   = scanner_penny.scan_penny(mc_us_p,  {"_df": None}, 10000.0, 1.0)
+out_uk   = scanner_penny.scan_penny(mc_uk_p,  {"_df": None}, 10000.0, 1.0)
+check("scan_penny returns list", isinstance(out_us, list))
+check("scan_penny returns [] for UK (non-penny market)", out_uk == [])
+scanner_penny.analyze_penny = _orig_penny_analyze
+
+# signal vocabulary check (inline, no network)
+fake_penny = {
+    "ticker": "SOFI", "price": 8.50, "currency": "$",
+    "signal": "PENNY MOMENTUM BUY", "verdict": "Test", "hold_days": "1d",
+    "win_prob": 55, "minervini_score": 0, "rs_score": None, "rsi": 60,
+    "is_overbought": False, "is_extended": False, "extension_pct": 0.0,
+    "entry": 8.50, "stop": 7.22, "rr": {"t1": 10.62, "t2": 12.75, "t3": 17.0},
+    "t1_price": 10.62, "t2_price": 12.75,
+    "criteria": {}, "volume": {"pass": True, "ratio": 2.5},
+    "sweep": {"pass": False}, "score": 6, "vol_ratio": 2.5,
+    "ann_vol": 80.0, "is_penny": True, "track": "penny", "_df": None,
+}
+check("penny result has is_penny flag", fake_penny.get("is_penny") is True)
+check("penny signal starts with PENNY", fake_penny["signal"].startswith("PENNY"))
+
+# Penny momentum email renders
+_orig_alert2 = notifier.send_alert
+_cap2 = {}
+notifier.send_alert = lambda s, h, **k: (_cap2.update(subj=s, html=h) or (True, "dry"))
+ok2, m2 = notifier.send_penny_momentum_email([fake_penny])
+check("penny_momentum_email sends", ok2 is True, m2)
+check("penny email subject has ticker", "SOFI" in _cap2.get("subj", ""))
+notifier.send_alert = _orig_alert2
+
+# Penny Telegram render
+_orig_tg = notifier.send_telegram
+_cap3 = {}
+notifier.send_telegram = lambda m, c="", **k: (_cap3.update(msg=m) or (True, "ok"))
+notifier.tg_penny_momentum([fake_penny], "123")
+check("tg_penny_momentum renders", "SOFI" in _cap3.get("msg", ""), _cap3.get("msg", ""))
+check("tg_penny_momentum no backslashes", "\\" not in _cap3.get("msg", ""))
+notifier.send_telegram = _orig_tg
+
+
+# ── 14. Password reset surface ─────────────────────────────────────────
+print("\n[14] Forgot-password surface")
+check("auth.request_password_reset callable", callable(auth.request_password_reset))
+ok_r, msg_r = auth.request_password_reset("test@example.com")
+check("reset returns (bool, str)", isinstance(ok_r, bool) and isinstance(msg_r, str))
+check("reset message non-empty", len(msg_r) > 5, msg_r)
+
+# PENNY_HIT_THRESHOLD_PCT defined in predictor
+check("predictor.PENNY_HIT_THRESHOLD_PCT == 25",
+      ml_predictor.PENNY_HIT_THRESHOLD_PCT == 25.0)
 
 
 # ── Summary ────────────────────────────────────────────────────────────

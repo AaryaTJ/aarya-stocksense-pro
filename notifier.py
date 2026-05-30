@@ -916,3 +916,87 @@ def tg_trail_stop(pos: dict, monitor_dict: dict, suggested_stop: float,
         f"Entry: {cur}{_esc(monitor_dict.get('entry','—'))}"
     )
     return send_telegram(msg, chat_id)
+
+
+# ── PENNY MOMENTUM (proactive daily digest) ───────────────────────────
+
+def send_penny_momentum_email(picks: list) -> tuple[bool, str]:
+    """Daily proactive email: top penny momentum setups (not just spikes)."""
+    if not picks:
+        return False, "No penny momentum picks to send."
+
+    row = lambda lbl, val, vc="#fff": (
+        f"<tr><td style='padding:6px 10px;background:#121e30;border:1px solid #1a2f4a;"
+        f"color:#4A7FA5;font-size:11px;width:30%;'>{lbl}</td>"
+        f"<td style='padding:6px 10px;background:#121e30;border:1px solid #1a2f4a;"
+        f"color:{vc};font-weight:700;'>{val}</td></tr>"
+    )
+
+    _sig_col = {
+        "PENNY MOMENTUM BUY":   "#FFB340",
+        "PENNY MOMENTUM WATCH": "#4A7FA5",
+        "PENNY CAUTION":        "#FF7A50",
+    }
+
+    sections = ""
+    for i, p in enumerate(picks[:5]):
+        t   = p.get("ticker", "?")
+        sig = p.get("signal", "?")
+        cur = p.get("currency", "$")
+        rr  = p.get("rr", {})
+        col = _sig_col.get(sig, "#FFB340")
+        mkt = p.get("market_label", "")
+        sections += (
+            f"<div style='margin-bottom:16px;'>"
+            f"<div style='background:#121e30;border-left:4px solid {col};"
+            f"border-radius:8px;padding:10px 14px;margin-bottom:5px;'>"
+            f"<span style='font-size:18px;font-weight:900;color:#fff;'>⚡ {t}</span>"
+            f"&nbsp;&nbsp;<span style='background:{col};color:#050d15;font-size:10px;"
+            f"font-weight:700;padding:2px 8px;border-radius:10px;'>{sig}</span>"
+            + (f"&nbsp;&nbsp;<span style='color:#4A7FA5;font-size:11px;'>{mkt}</span>" if mkt else "") +
+            f"<div style='color:#C9D6E3;font-size:12px;margin-top:5px;'>"
+            f"{p.get('verdict','')[:150]}…</div>"
+            f"</div>"
+            f"<table style='width:100%;border-collapse:collapse;'>"
+            + row("Price",      f"{cur}{p.get('price','—')}")
+            + row("Entry",      f"{cur}{p.get('entry','—')}")
+            + row("Stop",       f"{cur}{p.get('stop','—')}",  "#FF4D6A")
+            + row("T1 (+25%)",  f"{cur}{p.get('t1_price', rr.get('t1','—'))}", "#FFB340")
+            + row("T2 (+50%)",  f"{cur}{p.get('t2_price', rr.get('t2','—'))}", "#1D9E75")
+            + row("Vol Ratio",  f"{p.get('vol_ratio',1):.1f}x avg")
+            + row("RSI",        str(p.get("rsi", "—")))
+            + row("Win %",      f"{p.get('win_prob','?')}%", col)
+            + "</table></div>"
+        )
+
+    body = (
+        f"<div style='font-size:13px;color:#FFB340;font-weight:700;margin-bottom:14px;'>"
+        f"⚡ Today's Penny Momentum — {len(picks[:5])} setup(s)</div>"
+        + sections +
+        f"<div style='margin-top:14px;padding:10px 14px;background:#2d1a0a;"
+        f"border:1px solid #FFB340;border-radius:6px;color:#FFB340;font-size:11px;'>"
+        f"⚠️ <b>Penny stocks are high-risk.</b> Data is 15-min delayed. "
+        f"Risk only what you can lose — size positions very small. Not financial advice.</div>"
+    )
+    html    = _wrap("⚡ Penny Momentum Scanner", "#FFB340", body)
+    tickers = ", ".join(p.get("ticker", "?") for p in picks[:5])
+    return send_alert(f"[Aarya] ⚡ Penny Momentum: {tickers}", html)
+
+
+def tg_penny_momentum(picks: list, chat_id: str = "") -> tuple[bool, str]:
+    """Telegram digest for proactive penny momentum picks."""
+    if not picks:
+        return False, "No picks."
+    lines = [f"⚡ <b>Penny Momentum — {len(picks)} setup(s)</b>"]
+    for p in picks[:5]:
+        cur = _esc(p.get("currency", "$"))
+        sig = _esc(p.get("signal", "?"))
+        rr  = p.get("rr", {})
+        lines.append(
+            f"\n<b>{_esc(p.get('ticker','?'))}</b> — {sig}"
+            f"\nPrice: {cur}{_esc(p.get('price','—'))} | "
+            f"Vol: {p.get('vol_ratio',1):.1f}x | RSI: {_esc(p.get('rsi','—'))}"
+            f"\nT1: {cur}{_esc(rr.get('t1','—'))} (+25%) | Stop: {cur}{_esc(p.get('stop','—'))}"
+        )
+    lines.append("\n⚠️ <i>Penny stocks = high risk. Size small. Not financial advice.</i>")
+    return send_telegram("\n".join(lines), chat_id)

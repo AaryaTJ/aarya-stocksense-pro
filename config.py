@@ -48,6 +48,10 @@ MARKET_CONFIGS = {
             "ENPH","DKNG","AFRM","IONQ","RKLB","ARM","AVGO","AMD",
         ],
         "default": ["NVDA","MSFT","AAPL","GOOGL","AMZN","META","TSLA","PLTR"],
+        "penny_extras": [
+            "SOFI","PLUG","SOUN","BBAI","NU","GRAB","BITF","HUT","CLOV","NKLA",
+            "RIDE","WKHS","GOEV","MVIS","EXPR","GNUS","KOSS","NAKD","ZOME","BOXL",
+        ],
     },
 
     "🇮🇳 India NSE": {
@@ -71,6 +75,11 @@ MARKET_CONFIGS = {
         "default": [
             "RELIANCE.NS","TCS.NS","INFY.NS","HDFCBANK.NS",
             "ICICIBANK.NS","BAJFINANCE.NS","M&M.NS","WIPRO.NS",
+        ],
+        "penny_extras": [
+            "YESBANK.NS","IDEA.NS","IDFCFIRSTB.NS","IRFC.NS","NHPC.NS",
+            "TATAPOWER.NS","PNB.NS","BANKBARODA.NS","CANBK.NS","UNIONBANK.NS",
+            "RCOM.NS","JPASSOCIAT.NS","SUZLON.NS","GPIL.NS","SAIL.NS",
         ],
     },
 

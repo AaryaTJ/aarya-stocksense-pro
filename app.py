@@ -20,6 +20,7 @@ import auth
 import db
 import mldb
 import scanner_contrarian
+import scanner_penny
 from ml import predictor as ml_predictor
 
 st.set_page_config(page_title="Aarya StockSense Pro", page_icon="📈",
@@ -683,6 +684,92 @@ def tab_picks(cfg, market):
                     f"</div>{conf_html}</div>")
             except Exception as _ce2:
                 st.caption(f"display: {_ce2}")
+
+    # ── ⚡ Penny Momentum Scanner ─────────────────────────────────────────
+    # Only shown for US ($10 threshold) and India (₹300 threshold) markets.
+    _penny_key = mc.get("key", "")
+    if _penny_key in ("US", "IN"):
+        st.markdown("---")
+        st.markdown("#### ⚡ Penny Momentum Scanner")
+        _penny_thresh = "under $10" if _penny_key == "US" else "under ₹300"
+        st.caption(
+            f"Proactive momentum scanner for penny stocks ({_penny_thresh}). "
+            "Different from the spike alert above — surfaces ALL penny setups ranked by momentum, "
+            "not just those that spiked >29% today. High risk — size positions small."
+        )
+        try:
+            with st.spinner("Scanning penny momentum…"):
+                _penny_picks = scanner_penny.scan_penny(
+                    mc, {"_df": None}, cfg["portfolio"], cfg["risk_pct"])
+        except Exception as _pe:
+            st.caption(f"Penny scan unavailable: {_pe}")
+            _penny_picks = []
+
+        if not _penny_picks:
+            st.info("No penny momentum setups in this market right now.")
+        else:
+            _penny_sig_col = {
+                "PENNY MOMENTUM BUY":   "#FFB340",
+                "PENNY MOMENTUM WATCH": "#4A7FA5",
+                "PENNY CAUTION":        "#FF7A50",
+            }
+            _penny_cols = st.columns(min(len(_penny_picks), 2))
+            for _pi, _pp in enumerate(_penny_picks[:10]):
+                with _penny_cols[_pi % 2]:
+                    try:
+                        _prr  = _pp.get("rr", {})
+                        _pcol = _penny_sig_col.get(_pp.get("signal", ""), "#FFB340")
+                        _pconf = None
+                        try:
+                            _pconf = ml_predictor.score_prediction(_pp)
+                        except Exception:
+                            pass
+                        _conf_html = (
+                            f"<span style='color:#1D9E75;font-size:11px;font-weight:700;'>"
+                            f"ML {_pconf:.0f}%</span>" if _pconf else ""
+                        )
+                        card(
+                            f"<div style='background:#0a1525;border:1px solid {_pcol};"
+                            f"border-radius:10px;padding:12px 18px;margin-bottom:10px;'>"
+                            f"<div style='display:flex;justify-content:space-between;align-items:center;'>"
+                            f"<span style='font-size:18px;font-weight:900;color:#fff;'>⚡ {_pp['ticker']}</span>"
+                            f"<span style='background:{_pcol};color:#050d15;font-size:10px;"
+                            f"font-weight:700;padding:3px 10px;border-radius:10px;'>{_pp['signal']}</span></div>"
+                            f"<div style='color:#C9D6E3;font-size:12px;margin-top:6px;'>"
+                            f"{_pp.get('verdict','')[:200]}</div>"
+                            f"<div style='display:grid;grid-template-columns:repeat(4,1fr);"
+                            f"gap:6px;margin-top:8px;font-size:12px;'>"
+                            f"<div><div style='color:#4A7FA5;font-size:10px;'>Price</div>"
+                            f"<div style='color:#fff;font-weight:700;'>{cur}{_pp['price']}</div></div>"
+                            f"<div><div style='color:#4A7FA5;font-size:10px;'>Vol</div>"
+                            f"<div style='color:#FFB340;font-weight:700;'>{_pp.get('vol_ratio',1):.1f}x</div></div>"
+                            f"<div><div style='color:#4A7FA5;font-size:10px;'>RSI</div>"
+                            f"<div style='color:#C9D6E3;font-weight:700;'>{_pp.get('rsi','—')}</div></div>"
+                            f"<div><div style='color:#4A7FA5;font-size:10px;'>Stop</div>"
+                            f"<div style='color:#FF4D6A;font-weight:700;'>{cur}{_pp.get('stop','—')}</div></div>"
+                            f"</div>"
+                            f"<div style='display:grid;grid-template-columns:repeat(3,1fr);"
+                            f"gap:6px;margin-top:6px;font-size:11px;'>"
+                            f"<div style='background:#121e30;border-radius:4px;padding:4px;text-align:center;'>"
+                            f"<div style='color:#4A7FA5;font-size:10px;'>T1 +25%</div>"
+                            f"<div style='color:#FFB340;font-weight:700;'>{cur}{_pp.get('t1_price', _prr.get('t1','—'))}</div></div>"
+                            f"<div style='background:#121e30;border-radius:4px;padding:4px;text-align:center;'>"
+                            f"<div style='color:#4A7FA5;font-size:10px;'>T2 +50%</div>"
+                            f"<div style='color:#1D9E75;font-weight:700;'>{cur}{_pp.get('t2_price', _prr.get('t2','—'))}</div></div>"
+                            f"<div style='background:#121e30;border-radius:4px;padding:4px;text-align:center;'>"
+                            f"<div style='color:#4A7FA5;font-size:10px;'>T3 +100%</div>"
+                            f"<div style='color:#4A7FA5;font-weight:700;'>{cur}{_prr.get('t3','—')}</div></div>"
+                            f"</div>"
+                            f"{_conf_html}</div>"
+                        )
+                    except Exception as _pe2:
+                        st.caption(f"Display error: {_pe2}")
+
+        card("<div style='background:#2d1a0a;border:1px solid #FF7A50;border-radius:8px;"
+             "padding:8px 14px;margin-top:4px;'>"
+             "<span style='color:#FFB340;font-size:11px;'>⚠️ <b>Penny stocks are extremely volatile.</b> "
+             "Risk only what you can lose. Never bet more than 0.5–1% of portfolio per penny trade. "
+             "Data is 15-min delayed — verify live price before acting.</span></div>")
 
     # ── 🤖 Chatbot panel — "Ask Aarya about today's picks" ─────────────
     st.markdown("---")
@@ -1649,7 +1736,27 @@ def show_login():
             else:
                 st.rerun()
 
-    st.markdown("<div style='text-align:center;margin-top:20px;color:#4A7FA5;font-size:12px;'>"
+    # ── Forgot Password link ───────────────────────────────────────────
+    st.markdown("<div style='text-align:center;margin-top:14px;'>", unsafe_allow_html=True)
+    if st.button("Forgot password?", key="_fpw_toggle", use_container_width=False):
+        st.session_state["_show_reset"] = not st.session_state.get("_show_reset", False)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    if st.session_state.get("_show_reset", False):
+        with st.form("reset_form"):
+            reset_email = st.text_input("Enter your email to receive a reset link",
+                                        placeholder="your@email.com")
+            reset_submitted = st.form_submit_button("Send Reset Link", use_container_width=True)
+        if reset_submitted:
+            if not reset_email:
+                st.error("Enter your email address.")
+            else:
+                with st.spinner("Sending…"):
+                    _, msg = auth.request_password_reset(reset_email)
+                st.success(msg)
+                st.session_state["_show_reset"] = False
+
+    st.markdown("<div style='text-align:center;margin-top:14px;color:#4A7FA5;font-size:12px;'>"
                 "Access is by invitation only.<br>Contact the admin to request an account.</div>",
                 unsafe_allow_html=True)
 
