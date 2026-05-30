@@ -354,6 +354,11 @@ def calc_avwap(df: pd.DataFrame, window: int = 60) -> float | None:
     if anchor_idx is None:
         return None
     sub = df.loc[anchor_idx:]
+    # AVWAP needs ≥2 bars; when the anchor lands on the last row sub is single-
+    # row, .squeeze() collapses to a scalar, .cumsum() returns ndarray, and the
+    # subsequent .iloc crashes. Skip — single-bar AVWAP is meaningless anyway.
+    if len(sub) < 2:
+        return None
     tp  = (sub["High"].squeeze() + sub["Low"].squeeze() + sub["Close"].squeeze()) / 3
     vol = sub["Volume"].squeeze()
     cum_vol = vol.cumsum()
