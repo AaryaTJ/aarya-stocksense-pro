@@ -51,92 +51,90 @@ def css():
     [data-testid="stDataFrame"]{border:1px solid #1a2f4a;border-radius:8px}
     hr{border-color:#1a2f4a!important}
     .stExpander{border:1px solid #1a2f4a!important;border-radius:8px!important;background:#0a1525!important}
+    /* ═════════════════════════════════════════════════════════════ */
+    /* TRUE FLUID RESPONSIVENESS — works on every screen size        */
+    /* without per-device media query tuning. Two ideas do the heavy */
+    /* lifting:                                                       */
+    /*   1) auto-fit grids: browser figures out column count itself  */
+    /*   2) clamp(): font sizes scale smoothly with viewport width   */
+    /* These rules apply on ALL screen sizes — small media queries   */
+    /* below only handle Streamlit-specific containers + paddings.   */
+    /* ═════════════════════════════════════════════════════════════ */
+
+    /* Every Streamlit markdown container respects the viewport */
+    [data-testid="stMarkdownContainer"],
+    [data-testid="stMarkdownContainer"] > div{
+        max-width:100%!important;word-wrap:break-word!important;
+        overflow-wrap:break-word!important;box-sizing:border-box!important}
+
+    /* Auto-fit grids: each cell ≥120px, browser fills as many cols as fit.
+       Phone (≤360px) → 2 cols; small phone (390px) → 2-3; tablet → 4-5; desktop → original */
+    div[style*="grid-template-columns:repeat(5,1fr)"]{
+        grid-template-columns:repeat(auto-fit,minmax(110px,1fr))!important;
+        gap:6px!important}
+    div[style*="grid-template-columns:repeat(4,1fr)"]{
+        grid-template-columns:repeat(auto-fit,minmax(120px,1fr))!important;
+        gap:6px!important}
+    div[style*="grid-template-columns:repeat(3,1fr)"]{
+        grid-template-columns:repeat(auto-fit,minmax(140px,1fr))!important;
+        gap:6px!important}
+
+    /* Every flex row inside markdown wraps naturally — never overflow */
+    [data-testid="stMarkdownContainer"] div[style*="display:flex"]{
+        flex-wrap:wrap!important;max-width:100%!important}
+
+    /* Fluid font sizes — clamp(min, fluid, max). Small screens shrink, large
+       screens get the original size. No breakpoints needed. */
+    div[style*="font-size:24px"],span[style*="font-size:24px"]{
+        font-size:clamp(15px,4.5vw,24px)!important}
+    div[style*="font-size:22px"],span[style*="font-size:22px"]{
+        font-size:clamp(14px,4vw,22px)!important}
+    div[style*="font-size:20px"],span[style*="font-size:20px"]{
+        font-size:clamp(13px,3.5vw,20px)!important}
+    div[style*="font-size:18px"],span[style*="font-size:18px"]{
+        font-size:clamp(12px,3vw,18px)!important}
+    div[style*="font-size:16px"],span[style*="font-size:16px"]{
+        font-size:clamp(11px,2.7vw,16px)!important}
+
+    /* HTML tables inside markdown — scroll horizontally if they don't fit */
+    [data-testid="stMarkdownContainer"] table{
+        display:block!important;overflow-x:auto!important;max-width:100%!important;
+        width:auto!important;-webkit-overflow-scrolling:touch!important}
+    [data-testid="stMarkdownContainer"] table td,
+    [data-testid="stMarkdownContainer"] table th{
+        white-space:nowrap!important}
+
+    /* Plotly charts always fit viewport */
+    [data-testid="stPlotlyChart"]{max-width:100%!important;overflow-x:auto!important}
+
+    /* ── Phone-only tightening: paddings, sidebar, tabs ─────────── */
     @media screen and (max-width:640px){
-        /* ── Streamlit native containers ─────────────────────────── */
-        [data-testid="column"]{min-width:100%!important;margin-bottom:8px}
-        [data-testid="stDataFrame"]{max-width:calc(100vw - 2rem)!important;overflow-x:auto!important}
-        [data-testid="stMetric"]{padding:8px 10px!important}
-        h1{font-size:1.2rem!important;margin:0.2rem 0!important}
-        h2,h3{font-size:1.0rem!important;margin:0.2rem 0!important}
-        h4{font-size:0.95rem!important}
+        [data-testid="column"]{min-width:100%!important;margin-bottom:6px}
+        [data-testid="stDataFrame"]{max-width:calc(100vw - 1.5rem)!important;overflow-x:auto!important}
+        [data-testid="stMetric"]{padding:6px 8px!important}
+        h1{font-size:1.15rem!important;margin:0.25rem 0!important}
+        h2{font-size:1.0rem!important;margin:0.25rem 0!important}
+        h3{font-size:0.95rem!important;margin:0.25rem 0!important}
+        h4{font-size:0.85rem!important}
         [data-baseweb="tab"]{font-size:10px!important;padding:5px 6px!important}
-        [data-testid="stAppViewContainer"] > section:first-child{padding:0.4rem!important}
+        [data-testid="stAppViewContainer"] > section:first-child{padding:0.3rem!important}
         .block-container{padding:0.4rem 0.5rem!important;max-width:100vw!important}
-        /* Make every markdown block obey viewport width — root cause of overflow */
-        [data-testid="stMarkdownContainer"],
-        [data-testid="stMarkdownContainer"] > div{
-            max-width:100%!important;overflow-x:hidden!important;
-            word-wrap:break-word!important;overflow-wrap:break-word!important}
-        /* Cap caption / paragraph wrap */
-        [data-testid="stMarkdownContainer"] p{
-            max-width:100%!important;word-break:break-word!important}
-
-        /* ── Carpet-bomb every custom-HTML grid inside markdown ──── */
-        [data-testid="stMarkdownContainer"] div[style*="display:grid"]{
-            grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:4px!important;
-            max-width:100%!important}
-        /* Single-column grid for very narrow phones (≤380px) handled below */
-
-        /* Every flex row in markdown wraps on phones */
-        [data-testid="stMarkdownContainer"] div[style*="display:flex"]{
-            flex-wrap:wrap!important;gap:4px!important;max-width:100%!important}
-
-        /* ── Specific overrides for inline-styled grids ─────────── */
-        div[style*="grid-template-columns:repeat(5,1fr)"],
-        div[style*="grid-template-columns:repeat(4,1fr)"]{
-            grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:4px!important}
-        div[style*="grid-template-columns:repeat(3,1fr)"]{
-            grid-template-columns:1fr 1fr!important;gap:4px!important}
-
-        /* ── Shrink ALL font sizes — be aggressive ─────────────── */
-        div[style*="font-size:24px"],span[style*="font-size:24px"]{font-size:15px!important}
-        div[style*="font-size:22px"],span[style*="font-size:22px"]{font-size:15px!important}
-        div[style*="font-size:20px"],span[style*="font-size:20px"]{font-size:14px!important}
-        div[style*="font-size:18px"],span[style*="font-size:18px"]{font-size:13px!important}
-        div[style*="font-size:16px"],span[style*="font-size:16px"]{font-size:12px!important}
-        div[style*="font-size:15px"],span[style*="font-size:15px"]{font-size:12px!important}
-        div[style*="font-size:14px"],span[style*="font-size:14px"]{font-size:12px!important}
-        div[style*="font-size:13px"]{font-size:12px!important}
-        div[style*="line-height:1.6"],div[style*="line-height:1.8"]{line-height:1.35!important}
-
-        /* ── Tighten ALL paddings on phones ────────────────────── */
+        /* Tighten our custom-HTML padding on phones */
         div[style*="padding:14px 18px"],div[style*="padding:14px 16px"],
         div[style*="padding:12px 18px"],div[style*="padding:14px 24px"],
-        div[style*="padding:18px 24px"]{padding:8px 10px!important}
-        div[style*="padding:14px"]{padding:8px!important}
+        div[style*="padding:18px 24px"],div[style*="padding:14px"]{
+            padding:8px 10px!important}
         div[style*="padding:12px"]{padding:7px!important}
-        div[style*="padding:10px 16px"]{padding:7px 9px!important}
-        div[style*="margin-bottom:14px"],div[style*="margin-bottom:12px"]{margin-bottom:8px!important}
-
-        /* ── Custom HTML tables: scroll horizontally, don't overflow ── */
-        [data-testid="stMarkdownContainer"] table{
-            display:block!important;overflow-x:auto!important;
-            max-width:100%!important;width:100%!important;font-size:11px!important}
-        [data-testid="stMarkdownContainer"] table td,
-        [data-testid="stMarkdownContainer"] table th{
-            padding:4px 6px!important;font-size:11px!important;white-space:nowrap!important}
-
-        /* ── Chip pills wrap nicely ────────────────────────────── */
-        span[style*="display:inline-block"]{margin:1px 2px!important;font-size:9px!important;
-            padding:1px 5px!important}
-
-        /* ── Sidebar tightening ───────────────────────────────── */
+        div[style*="margin-bottom:14px"],div[style*="margin-bottom:12px"]{
+            margin-bottom:6px!important}
+        /* Chip pills compact */
+        span[style*="display:inline-block"][style*="font-size:10px"]{
+            margin:1px 2px!important;padding:1px 5px!important;font-size:9px!important}
+        /* Sidebar trimmed */
         [data-testid="stSidebar"]{padding:0.4rem!important}
         [data-testid="stSidebar"] img{max-width:140px!important;margin:0 auto!important;display:block!important}
-
-        /* ── Plotly charts: never wider than viewport ────────── */
-        [data-testid="stPlotlyChart"],.user-select-none.svg-container{
-            max-width:100vw!important;width:100%!important;overflow-x:auto!important}
-    }
-
-    /* Even tighter on very narrow phones (≤380px) — collapse 2-col grids to 1 */
-    @media screen and (max-width:380px){
-        [data-testid="stMarkdownContainer"] div[style*="display:grid"]{
-            grid-template-columns:1fr!important}
-        div[style*="grid-template-columns:repeat(5,1fr)"],
-        div[style*="grid-template-columns:repeat(4,1fr)"],
-        div[style*="grid-template-columns:repeat(3,1fr)"]{
-            grid-template-columns:1fr!important}
+        /* Tighter line-height for verdicts */
+        div[style*="line-height:1.6"],div[style*="line-height:1.8"]{line-height:1.35!important}
     }
     </style>""", unsafe_allow_html=True)
 
