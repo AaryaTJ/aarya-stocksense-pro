@@ -16,6 +16,8 @@ on:
     - cron: '30 13 * * 1-5'
     # 11:00 PM IST — US mid-session
     - cron: '30 17 * * 1-5'
+    # ── Weekly performance report (Sunday 5:30 PM IST = 12:00 UTC) ─
+    - cron: '30 12 * * 0'
   workflow_dispatch:   # manual run from GitHub Actions tab
 
 jobs:
@@ -35,7 +37,8 @@ jobs:
         run: |
           pip install --quiet \
             yfinance pandas numpy requests \
-            google-genai lxml html5lib beautifulsoup4
+            google-genai lxml html5lib beautifulsoup4 \
+            scikit-learn scipy
 
       - name: Run monitor
         run: python monitor.py

@@ -120,6 +120,17 @@ CREATE TABLE public.model_state (
 ALTER TABLE public.model_state ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Service role full access"
   ON public.model_state USING (true) WITH CHECK (true);
+
+-- Gemini response cache (Phase 5 — protects the 250-requests/day free quota)
+CREATE TABLE public.gemini_cache (
+  key text PRIMARY KEY,
+  response text,
+  kind text,
+  created_at timestamptz DEFAULT now()
+);
+ALTER TABLE public.gemini_cache ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Service role full access"
+  ON public.gemini_cache USING (true) WITH CHECK (true);
 ```
 
 ### Authentication Settings (Supabase → Authentication → Settings)

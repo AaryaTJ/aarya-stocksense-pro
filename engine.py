@@ -996,6 +996,53 @@ def auto_suffix(ticker: str, market_key: str) -> str:
 
 
 # ══════════════════════════════════════════════════════════════════════
+#  PORTFOLIO SENTIMENT (news + Gemini quick read for held positions)
+# ══════════════════════════════════════════════════════════════════════
+
+def portfolio_sentiment(positions: list[dict]) -> dict:
+    """
+    For each held position, pull the latest news headlines, derive a quick
+    colour-coded sentiment label, and ask Gemini for a 2-sentence summary.
+    Returns {ticker: {"label": str, "color": str, "summary": str, "headlines": list}}.
+    Gracefully degrades when news / Gemini are unavailable.
+    """
+    import notifier as _notif
+    out = {}
+    for pos in (positions or []):
+        ticker = pos.get("ticker", "")
+        if not ticker:
+            continue
+        news = fetch_news(ticker, n=4) or []
+        if not news:
+            news = fetch_news_av(ticker)[:4] if _av_key() else []
+        # majority sentiment
+        pos_n = sum(1 for n in news if "Positive" in (n.get("sent") or "") or "Bull" in (n.get("sent") or ""))
+        neg_n = sum(1 for n in news if "Negative" in (n.get("sent") or "") or "Bear" in (n.get("sent") or ""))
+        if pos_n > neg_n:   label, color = "🟢 Positive",   "#00C48C"
+        elif neg_n > pos_n: label, color = "🔴 Negative",   "#FF4D6A"
+        else:               label, color = "⚪ Mixed/Neutral", "#4A7FA5"
+
+        headlines = [n.get("title", "") for n in news[:3]]
+        # Short Gemini summary (cached). Don't crash the portfolio tab if
+        # quota/network/no-key — fall back to a built sentence.
+        summary = ""
+        if headlines:
+            try:
+                prompt = (f"In ≤2 sentences, summarise this week's "
+                          f"news risk for {ticker}. Headlines: "
+                          + " | ".join(headlines[:3]) +
+                          " End with 'Not financial advice.'")
+                summary = _notif._gemini_cached_call(prompt, kind="briefing")
+            except Exception:
+                summary = ""
+        if not summary:
+            summary = f"{ticker}: {label}. {len(news)} recent headlines."
+        out[ticker] = {"label": label, "color": color,
+                       "summary": summary, "headlines": headlines}
+    return out
+
+
+# ══════════════════════════════════════════════════════════════════════
 #  SAFE FUNDAMENTALS (crash-proof version)
 # ══════════════════════════════════════════════════════════════════════
 

@@ -41,7 +41,15 @@ def check(name, cond, detail=""):
 # ── 1. Imports ─────────────────────────────────────────────────────────
 print("\n[1] Module imports")
 import applog, engine as eng, notifier, mldb, db, monitor, config, auth  # noqa
+import scanner_contrarian, gemini_cache                                   # noqa
+from ml import predictor as ml_predictor, backtest as ml_backtest, weekly_report  # noqa
 check("all core modules import", True)
+check("engine.portfolio_sentiment present", hasattr(eng, "portfolio_sentiment"))
+check("scanner_contrarian.scan_contrarian present", hasattr(scanner_contrarian, "scan_contrarian"))
+check("ml_predictor.score_prediction present", hasattr(ml_predictor, "score_prediction"))
+check("ml_backtest.check_deploy_gate present", hasattr(ml_backtest, "check_deploy_gate"))
+check("notifier.send_momentum_alert present", hasattr(notifier, "send_momentum_alert"))
+check("notifier.send_trail_stop_email present", hasattr(notifier, "send_trail_stop_email"))
 
 
 # ── 2. Market hours ────────────────────────────────────────────────────
@@ -126,6 +134,64 @@ check("already_sent False w/o creds", mldb.already_sent("k") is False)
 check("get_all_users_with_settings returns []", db.get_all_users_with_settings() == [])
 ok, m = monitor._dedup_send("k", "T", "key", lambda: (True, "sent"))
 check("_dedup_send passes through when no DB", ok is True)
+
+
+# ── 8. ML predictor cold-start fallback ────────────────────────────────
+print("\n[8] ML predictor cold-start")
+# With no DB / no trained model, score_prediction must return win_prob unchanged
+score = ml_predictor.score_prediction({"win_prob": 72, "minervini_score": 7, "rs_score": 1.3})
+check("cold-start score returns win_prob", abs(score - 72.0) < 0.1, f"got {score}")
+fv = ml_predictor._feature_vector({"minervini": 7, "rs_score": 1.3, "rsi": 55,
+                                    "win_prob": 72, "features": {"extension_pct": 3,
+                                                                  "volume_ratio": 2.1,
+                                                                  "sweep": True}})
+check("feature vector length", len(fv) == 9)
+
+
+# ── 9. Momentum + trail-stop Telegram render (HTML, no backslashes) ─────
+print("\n[9] Momentum + trail-stop telegram render")
+_orig_send = notifier.send_telegram
+_cap = {}
+notifier.send_telegram = lambda m, c="", **k: (_cap.update(msg=m) or (True, "ok"))
+notifier.tg_momentum_alert({"ticker": "NVDA", "currency": "$", "price": 500,
+                             "entry": 500, "stop": 480, "rr": {"t1": 550},
+                             "intraday_pct": 4.3, "vol_ratio": 3.1}, confidence=78)
+check("momentum TG has <b>", "<b>NVDA</b>" in _cap.get("msg", ""))
+check("momentum TG includes confidence", "78" in _cap.get("msg", ""))
+notifier.tg_trail_stop({}, {"ticker": "AAPL", "currency": "$", "current": 210,
+                             "entry": 190, "pnl_pct": 10.5}, 200.0)
+check("trail TG has TRAIL STOP", "TRAIL STOP" in _cap.get("msg", ""))
+check("trail TG has no backslashes", "\\" not in _cap.get("msg", ""))
+notifier.send_telegram = _orig_send
+
+
+# ── 10. Gemini cache no-creds graceful path ────────────────────────────
+print("\n[10] Gemini cache graceful no-creds")
+check("get_cached returns None w/o creds",  gemini_cache.get_cached("prompt") is None)
+check("put_cached returns False w/o creds", gemini_cache.put_cached("p", "r") is False)
+fallback = gemini_cache.rule_based_fallback("NVDA", "BUY TODAY", 78, 7)
+check("rule_based_fallback contains ticker", "NVDA" in fallback)
+
+
+# ── 11. Contrarian scanner basic shape ─────────────────────────────────
+print("\n[11] Contrarian scanner contract")
+# scan_contrarian must accept the standard mc/regime/portfolio/risk args and
+# return a list (possibly empty). We monkeypatch analyze to avoid network.
+_orig_analyze = scanner_contrarian.analyze_contrarian
+scanner_contrarian.analyze_contrarian = lambda *a, **k: None
+out = scanner_contrarian.scan_contrarian(
+    {"key": "US", "currency": "$", "is_crypto": False, "growth": ["AAPL"], "blue_chips": []},
+    {"_df": None}, 10000.0, 1.0)
+check("scan_contrarian returns list", isinstance(out, list))
+scanner_contrarian.analyze_contrarian = _orig_analyze
+
+
+# ── 12. Backtest API + deploy gate shape (no execution, just structure) ─
+print("\n[12] Backtest module surface")
+check("run_backtest exists",        callable(ml_backtest.run_backtest))
+check("check_deploy_gate exists",   callable(ml_backtest.check_deploy_gate))
+check("backtest constants sane",
+      ml_backtest.HIT_THRESHOLD == 20.0 and ml_backtest.HOLD_DAYS == 10)
 
 
 # ── Summary ────────────────────────────────────────────────────────────

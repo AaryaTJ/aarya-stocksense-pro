@@ -34,6 +34,8 @@ import engine as eng
 import notifier
 import db
 import mldb
+import scanner_contrarian
+from ml import predictor as ml_predictor
 from config import MARKET_CONFIGS
 from datetime import date as _date
 
@@ -267,6 +269,97 @@ def _dedup_send(kind: str, ticker: str, dedup_key: str, send_fn):
     return ok, msg
 
 
+# ── Contrarian scan (wraps scanner_contrarian for the two main markets) ──
+
+def check_contrarian_picks(cfg: dict) -> list:
+    out = []
+    for market_name, currency in (("🇺🇸 US Stocks", "$"), ("🇮🇳 India NSE", "₹")):
+        mc = MARKET_CONFIGS.get(market_name)
+        if not mc:
+            continue
+        try:
+            regime = eng.check_regime(mc)
+        except Exception:
+            regime = {"_df": None}
+        try:
+            picks = scanner_contrarian.scan_contrarian(mc, regime,
+                                                      cfg["portfolio"], cfg["risk_pct"])
+            for p in picks:
+                p["currency"]     = currency
+                p["market_label"] = market_name
+            out.extend(picks)
+        except Exception as e:
+            log.warning(f"Contrarian scan failed for {market_name}: {e}")
+    return out
+
+
+# ── High-Momentum Breakout scan ────────────────────────────────────────
+
+def check_momentum_breakouts(cfg: dict) -> list:
+    """
+    Picks already-analysed tickers that are also in a fresh breakout state
+    (price > 5-day high, RSI 60-70, 2x+ volume, RS > 1.20, Minervini >= 6,
+    ML confidence >= 70). Returns a (possibly empty) list of result dicts
+    with intraday_pct + vol_ratio + confidence attached.
+    """
+    out = []
+    for market_name, currency in (("🇺🇸 US Stocks", "$"), ("🇮🇳 India NSE", "₹")):
+        mc = MARKET_CONFIGS.get(market_name)
+        if not mc:
+            continue
+        tickers = list(dict.fromkeys(mc.get("growth", []) + mc.get("blue_chips", [])))[:20]
+        try:
+            regime = eng.check_regime(mc)
+        except Exception:
+            regime = {"_df": None}
+        for t in tickers:
+            try:
+                r = eng.analyze_ticker(t, mc, regime.get("_df"),
+                                       cfg["portfolio"], cfg["risk_pct"])
+                if r is None:
+                    continue
+                if r.get("minervini_score", 0) < 6:
+                    continue
+                if (r.get("rs_score") or 0) < 1.20:
+                    continue
+                rsi = r.get("rsi")
+                if rsi is None or not (60 <= rsi <= 70):
+                    continue
+                vol_ratio = (r.get("volume") or {}).get("ratio", 0)
+                if vol_ratio < 2.0:
+                    continue
+                # 5-day high check (yesterday's rolling 5-day high; today must exceed it)
+                df = r.get("_df")
+                if df is None or len(df) < 7:
+                    continue
+                hi5 = float(df["Close"].iloc[-6:-1].max())
+                if r["price"] <= hi5:
+                    continue
+                prev = float(df["Close"].iloc[-2])
+                intraday_pct = (r["price"] - prev) / prev * 100 if prev else 0.0
+
+                # ML confidence gate
+                try:
+                    conf = ml_predictor.score_prediction(r)
+                except Exception:
+                    conf = float(r.get("win_prob", 50))
+                if conf < 70:
+                    log.info(f"Momentum skip {t}: confidence {conf}")
+                    continue
+
+                r["currency"]     = currency
+                r["market_label"] = market_name
+                r["intraday_pct"] = round(intraday_pct, 2)
+                r["vol_ratio"]    = round(vol_ratio, 2)
+                r["confidence"]   = conf
+                out.append(r)
+                log.info(f"MOMENTUM BREAKOUT: {t} +{intraday_pct:.1f}% on "
+                         f"{vol_ratio:.1f}x vol  conf={conf}")
+            except Exception as e:
+                log.debug(f"{t} momentum error: {e}")
+    return out
+
+
 # ── MAIN ───────────────────────────────────────────────────────────────
 
 def run():
@@ -327,6 +420,30 @@ def run():
         log.info(f"Logged {logged}/{len(picks)} prediction(s) to Supabase.")
     else:
         log.info("Supabase ML store not configured — prediction logging skipped.")
+
+    # ── Contrarian / oversold-quality scan ────────────────────────────
+    log.info("Step 1b: Scanning contrarian / oversold-quality setups…")
+    try:
+        contrarian = check_contrarian_picks(cfg)
+        log.info(f"Contrarian picks: {len(contrarian)}")
+    except Exception as e:
+        log.error(f"Contrarian scan failed: {e}")
+        contrarian = []
+    if mldb.available():
+        for p in contrarian:
+            try:
+                mldb.log_prediction(p)
+            except Exception:
+                pass
+
+    # ── High-momentum breakout scan (intraday alerts) ─────────────────
+    log.info("Step 1c: Scanning for high-momentum breakouts…")
+    try:
+        momentum = check_momentum_breakouts(cfg)
+        log.info(f"Momentum breakouts: {len(momentum)}")
+    except Exception as e:
+        log.error(f"Momentum scan failed: {e}")
+        momentum = []
 
     # Collect all Telegram chat IDs from website registrations + env fallback
     tg_chat_ids = []
@@ -396,6 +513,25 @@ def run():
     else:
         log.info("No penny spikes today — penny email skipped.")
 
+    # ── Momentum breakout alerts (one per ticker, deduped per day) ────
+    for r in momentum:
+        t = r.get("ticker", "?")
+        try:
+            ok, msg = _dedup_send(
+                "email_momentum", t, f"email:momentum:{t}:{today}",
+                lambda: notifier.send_momentum_alert(r, confidence=r.get("confidence")))
+            log.info(f"Momentum email {t}: {'✅' if ok else '❌ ' + msg}")
+        except Exception as e:
+            log.error(f"Momentum email error ({t}): {e}")
+        for cid in tg_chat_ids:
+            try:
+                ok, msg = _dedup_send(
+                    "tg_momentum", t, f"tg:momentum:{cid}:{t}:{today}",
+                    lambda: notifier.tg_momentum_alert(r, confidence=r.get("confidence"), chat_id=cid))
+                log.info(f"Momentum TG {t} → {cid}: {'✅' if ok else '❌ ' + msg}")
+            except Exception as e:
+                log.error(f"Momentum TG error ({t}/{cid}): {e}")
+
     # ── Step 3: Portfolio sell alerts ──────────────────────────────────
     # Prefer per-user positions from Supabase (each user gets alerts for THEIR
     # own positions, on THEIR email + Telegram). Fall back to local settings
@@ -407,6 +543,34 @@ def run():
     except Exception as e:
         log.error(f"Per-user portfolio check failed: {e}")
         user_alerts = []
+
+    # Also collect trail-stop opportunities: held positions up >= 1R that
+    # haven't yet hit T1 — suggest moving the stop to lock in profit.
+    trail_alerts = []
+    if mldb.available():
+        try:
+            for u in db.get_all_users_with_settings():
+                for pos in u.get("positions", []):
+                    market = pos.get("market", "US")
+                    mc = next((v for v in MARKET_CONFIGS.values() if v["key"] == market),
+                              MARKET_CONFIGS["🇺🇸 US Stocks"])
+                    try:
+                        m = eng.monitor_position(pos, mc, u.get("time_stop", 5))
+                        if "error" in m or m.get("action") != "🟢 HOLD":
+                            continue
+                        entry = float(m["entry"])
+                        stop  = float(m["stop"])
+                        current = float(m["current"])
+                        one_r = max(entry - stop, 1e-6)
+                        gain  = current - entry
+                        # Up at least 1R but T1 not yet hit -> suggest trail to BE
+                        if gain >= one_r and current < float(m.get("t1", entry)):
+                            suggested = round(entry, 4)  # break-even
+                            trail_alerts.append((u, pos, m, suggested))
+                    except Exception:
+                        continue
+        except Exception:
+            pass
 
     if user_alerts:
         for u, pos, m in user_alerts:
@@ -428,6 +592,26 @@ def run():
                     log.info(f"Sell Telegram [{cid}] {tkr}: {'✅' if ok else '❌ ' + msg}")
                 except Exception as e:
                     log.error(f"Sell Telegram error ({tkr}): {e}")
+
+    # Trail-stop alerts
+    for u, pos, m, suggested in trail_alerts:
+        tkr = pos.get("ticker", "?")
+        key = f"trail:{u['user_id']}:{tkr}:{today}"
+        if u.get("email"):
+            try:
+                ok, msg = _dedup_send("email_trail", tkr, "email:" + key,
+                                      lambda: notifier.send_trail_stop_email(pos, m, suggested, to_email=u["email"]))
+                log.info(f"Trail email [{u['email']}] {tkr}: {'✅' if ok else '❌ ' + msg}")
+            except Exception as e:
+                log.error(f"Trail email error ({tkr}): {e}")
+        cid = u.get("telegram_chat_id", "")
+        if cid:
+            try:
+                ok, msg = _dedup_send("tg_trail", tkr, "tg:" + key,
+                                      lambda: notifier.tg_trail_stop(pos, m, suggested, cid))
+                log.info(f"Trail TG [{cid}] {tkr}: {'✅' if ok else '❌ ' + msg}")
+            except Exception as e:
+                log.error(f"Trail TG error ({tkr}): {e}")
     else:
         # Fallback: local settings positions → global recipients + all chat IDs
         try:
@@ -455,8 +639,32 @@ def run():
         if not local_alerts:
             log.info("All portfolio positions are healthy — no sell alerts.")
 
-    log.info(f"Monitor run complete. {len(picks)} picks · {len(spikes)} penny spikes · "
-             f"{n_alerts} sell alert(s).")
+    # ── Step 4: ML feedback loop (only on the afternoon US-open run) ─
+    # Once per day is enough; pick the 13:30 UTC run (7 PM IST, US open) so we
+    # have fresh closes from the previous US session and India intraday.
+    if mldb.available() and sched == "30 13 * * 1-5":
+        log.info("Step 4/4: ML evaluate + train…")
+        try:
+            n_eval, n_hit, n_soft = ml_predictor.evaluate_open_predictions()
+            log.info(f"Evaluator: {n_eval} evaluated  {n_hit} hit  {n_soft} soft-hit")
+        except Exception as e:
+            log.error(f"ML evaluation failed: {e}")
+        try:
+            ml_predictor.train_ensemble()
+        except Exception as e:
+            log.error(f"ML training failed: {e}")
+
+    # ── Step 5: Weekly report (Sunday only) ───────────────────────────
+    if sched == "30 12 * * 0":
+        try:
+            from ml import weekly_report
+            weekly_report.send_weekly_report(tg_chat_ids)
+        except Exception as e:
+            log.error(f"Weekly report failed: {e}")
+
+    log.info(f"Monitor run complete. {len(picks)} trend · {len(contrarian)} contrarian · "
+             f"{len(spikes)} penny · {len(momentum)} momentum · "
+             f"{n_alerts} sell · {len(trail_alerts)} trail.")
     log.info("=" * 60)
 
 

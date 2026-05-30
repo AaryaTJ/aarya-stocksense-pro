@@ -539,75 +539,82 @@ def _gemini_client():
     return _genai.Client(api_key=api_key), None
 
 
-def get_gemini_briefing(ticker: str, result: dict = None) -> str:
+def _gemini_cached_call(prompt: str, kind: str = "briefing") -> str:
+    """Cache-aware Gemini call. Returns cached text when available, otherwise
+    calls Gemini and stores the response. Quota / network errors return a
+    rule-based fallback string."""
+    try:
+        import gemini_cache
+        cached = gemini_cache.get_cached(prompt, kind=kind)
+        if cached:
+            return cached
+    except Exception:
+        gemini_cache = None
     client, err = _gemini_client()
     if err:
         return err
     try:
-        sig_ctx = ""
-        if result:
-            sig_ctx = (f" Technical context: signal={result.get('signal','?')}, "
-                       f"price={result.get('currency','$')}{result.get('price','?')}, "
-                       f"Minervini={result.get('minervini_score','?')}/8, "
-                       f"RS={result.get('rs_score','?')}, win_prob={result.get('win_prob','?')}%.")
-        prompt = (
-            f"Give a concise 3-sentence investment briefing for {ticker}.{sig_ctx} "
-            f"Cover: (1) what the company/asset does, "
-            f"(2) one recent relevant news or catalyst, "
-            f"(3) one key risk to watch. "
-            f"Be factual and specific. End with: 'AI summary — not financial advice.'"
-        )
         resp = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
-        return resp.text
+        txt = resp.text or ""
+        try:
+            import gemini_cache as _gc
+            _gc.put_cached(prompt, txt, kind=kind)
+        except Exception:
+            pass
+        return txt
     except Exception as e:
-        return f"Gemini error: {e}"
+        log.warning(f"Gemini call failed ({kind}): {e}")
+        return f"AI explanation temporarily unavailable. (Gemini error: {str(e)[:80]})"
+
+
+def get_gemini_briefing(ticker: str, result: dict = None) -> str:
+    sig_ctx = ""
+    if result:
+        sig_ctx = (f" Technical context: signal={result.get('signal','?')}, "
+                   f"price={result.get('currency','$')}{result.get('price','?')}, "
+                   f"Minervini={result.get('minervini_score','?')}/8, "
+                   f"RS={result.get('rs_score','?')}, win_prob={result.get('win_prob','?')}%.")
+    prompt = (
+        f"Give a concise 3-sentence investment briefing for {ticker}.{sig_ctx} "
+        f"Cover: (1) what the company/asset does, "
+        f"(2) one recent relevant news or catalyst, "
+        f"(3) one key risk to watch. "
+        f"Be factual and specific. End with: 'AI summary — not financial advice.'"
+    )
+    return _gemini_cached_call(prompt, kind="briefing")
 
 
 def get_gemini_answer(ticker: str, question: str, result: dict = None) -> str:
-    client, err = _gemini_client()
-    if err:
-        return err
-    try:
-        ctx = ""
-        if result:
-            ctx = (f"Stock data context: ticker={ticker}, "
-                   f"signal={result.get('signal','?')}, "
-                   f"price={result.get('currency','$')}{result.get('price','?')}, "
-                   f"Minervini={result.get('minervini_score','?')}/8, "
-                   f"RS={result.get('rs_score','?')}. ")
-        prompt = (
-            f"{ctx}User question about {ticker}: {question}\n\n"
-            f"Answer in 2-3 sentences. Be specific and factual. "
-            f"End with: 'Note: Not financial advice.'"
-        )
-        resp = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
-        return resp.text
-    except Exception as e:
-        return f"Gemini error: {e}"
+    ctx = ""
+    if result:
+        ctx = (f"Stock data context: ticker={ticker}, "
+               f"signal={result.get('signal','?')}, "
+               f"price={result.get('currency','$')}{result.get('price','?')}, "
+               f"Minervini={result.get('minervini_score','?')}/8, "
+               f"RS={result.get('rs_score','?')}. ")
+    prompt = (
+        f"{ctx}User question about {ticker}: {question}\n\n"
+        f"Answer in 2-3 sentences. Be specific and factual. "
+        f"End with: 'Note: Not financial advice.'"
+    )
+    return _gemini_cached_call(prompt, kind="qa")
 
 
 def get_gemini_compact_verdict(ticker: str, result: dict) -> str:
     """3-line compact verdict for Telegram — why good, why risky, act or avoid."""
-    client, err = _gemini_client()
-    if err:
-        return ""
-    try:
-        prompt = (
-            f"Stock: {ticker} | Signal: {result.get('signal','?')} | "
-            f"Price: {result.get('currency','$')}{result.get('price','?')} | "
-            f"Minervini: {result.get('minervini_score','?')}/8 | "
-            f"RS: {result.get('rs_score','?')}/100 | "
-            f"Win prob: {result.get('win_prob','?')}%\n\n"
-            f"Reply in EXACTLY 3 lines, no headers:\n"
-            f"✅ [One specific reason this is a good setup]\n"
-            f"⚠️ [One specific risk right now]\n"
-            f"📌 [Direct verdict: act now / wait for entry / avoid — be specific]\n\n"
-            f"Max 50 words total. Use real company facts, not generic statements."
-        )
-        resp = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
-        return resp.text.strip()
-    except Exception as e:
-        return ""
+    prompt = (
+        f"Stock: {ticker} | Signal: {result.get('signal','?')} | "
+        f"Price: {result.get('currency','$')}{result.get('price','?')} | "
+        f"Minervini: {result.get('minervini_score','?')}/8 | "
+        f"RS: {result.get('rs_score','?')}/100 | "
+        f"Win prob: {result.get('win_prob','?')}%\n\n"
+        f"Reply in EXACTLY 3 lines, no headers:\n"
+        f"✅ [One specific reason this is a good setup]\n"
+        f"⚠️ [One specific risk right now]\n"
+        f"📌 [Direct verdict: act now / wait for entry / avoid — be specific]\n\n"
+        f"Max 50 words total. Use real company facts, not generic statements."
+    )
+    return _gemini_cached_call(prompt, kind="verdict").strip()
 
 
 def get_gemini_deep_analysis(ticker: str, result: dict) -> str:
@@ -616,9 +623,6 @@ def get_gemini_deep_analysis(ticker: str, result: dict) -> str:
     Explains WHY the signal is what it is, checks fundamentals,
     gives clear pros/cons and a final verdict.
     """
-    client, err = _gemini_client()
-    if err:
-        return err
     try:
         cur     = result.get("currency", "$")
         sig     = result.get("signal", "?")
@@ -664,17 +668,13 @@ One clear sentence: should the user act on this signal now, wait for a better en
 Keep total response under 280 words. Be specific — use numbers, names, facts. Not generic advice.
 End with: "⚠️ Not financial advice — always verify before trading."
 """
-        resp = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
-        return resp.text
+        return _gemini_cached_call(prompt, kind="deep")
     except Exception as e:
         return f"Gemini error: {e}"
 
 
 def get_gemini_question_answer(question: str) -> str:
     """Answer any financial question — stocks, MF, SIP, SWP, market concepts."""
-    client, err = _gemini_client()
-    if err:
-        return err
     try:
         prompt = f"""You are Aarya, a professional financial advisor assistant for Indian and US markets.
 
@@ -690,8 +690,7 @@ Answer this thoroughly covering:
 Keep response under 250 words. Be specific — use actual numbers, fund names, percentages.
 End with: "⚠️ Not financial advice — consult a SEBI-registered advisor for personal decisions."
 """
-        resp = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
-        return resp.text
+        return _gemini_cached_call(prompt, kind="qa")
     except Exception as e:
         return f"Gemini error: {e}"
 
@@ -810,5 +809,110 @@ def tg_sell_alert(pos: dict, monitor: dict, chat_id: str = "") -> tuple[bool, st
         f"Entry: {cur}{_esc(monitor.get('entry','—'))} → Now: {cur}{_esc(monitor.get('current','—'))}\n"
         f"P&amp;L: {cur}{pnl:+.2f} ({pct:+.1f}%)\n"
         f"<i>Open the app to act.</i>"
+    )
+    return send_telegram(msg, chat_id)
+
+
+# ── HIGH-MOMENTUM BREAKOUT ────────────────────────────────────────────
+
+def send_momentum_alert(result: dict, confidence: float = None) -> tuple[bool, str]:
+    """Email for a high-momentum breakout. confidence is the ML score (0–100)."""
+    t   = result.get("ticker", "?")
+    cur = result.get("currency", "$")
+    rr  = result.get("rr", {})
+    chg = result.get("intraday_pct", 0)
+    vol = result.get("vol_ratio", 0)
+    col = "#00C48C"
+    conf_line = f"<br><span style='color:#FFB340;'>ML confidence: <b>{confidence:.0f}%</b></span>" if confidence is not None else ""
+
+    body = (
+        f"<div style='background:#121e30;border-left:4px solid {col};border-radius:8px;"
+        f"padding:14px;margin-bottom:14px;'>"
+        f"<div style='font-size:24px;font-weight:900;color:#fff;'>💥 {t}</div>"
+        f"<div style='font-size:15px;color:{col};font-weight:700;margin-top:4px;'>HIGH MOMENTUM BREAKOUT</div>"
+        f"<div style='color:#C9D6E3;margin-top:8px;font-size:13px;'>"
+        f"Intraday: <b>+{chg:.1f}%</b>  ·  Volume <b>{vol:.1f}x</b> avg{conf_line}</div></div>"
+        f"<table style='width:100%;border-collapse:collapse;'>"
+        f"<tr><td style='padding:7px 12px;background:#121e30;border:1px solid #1a2f4a;color:#4A7FA5;font-size:11px;width:30%;'>PRICE</td>"
+        f"<td style='padding:7px 12px;background:#121e30;border:1px solid #1a2f4a;color:#fff;font-weight:700;'>{cur}{result.get('price','—')}</td></tr>"
+        f"<tr><td style='padding:7px 12px;background:#121e30;border:1px solid #1a2f4a;color:#4A7FA5;font-size:11px;'>ENTRY</td>"
+        f"<td style='padding:7px 12px;background:#121e30;border:1px solid #1a2f4a;color:#fff;font-weight:700;'>{cur}{result.get('entry','—')}</td></tr>"
+        f"<tr><td style='padding:7px 12px;background:#121e30;border:1px solid #1a2f4a;color:#4A7FA5;font-size:11px;'>STOP</td>"
+        f"<td style='padding:7px 12px;background:#121e30;border:1px solid #1a2f4a;color:#FF4D6A;font-weight:700;'>{cur}{result.get('stop','—')}</td></tr>"
+        f"<tr><td style='padding:7px 12px;background:#121e30;border:1px solid #1a2f4a;color:#4A7FA5;font-size:11px;'>T1</td>"
+        f"<td style='padding:7px 12px;background:#121e30;border:1px solid #1a2f4a;color:#FFB340;font-weight:700;'>{cur}{rr.get('t1','—')}</td></tr>"
+        f"</table>"
+        f"<div style='margin-top:14px;padding:10px 14px;background:#0e2a1f;"
+        f"border:1px solid {col};border-radius:6px;color:#C9D6E3;font-size:12px;'>"
+        f"⚡ Breakout with confirmed volume + RS. Move fast — momentum windows are short. "
+        f"Verify live before acting.</div>"
+    )
+    html = _wrap(f"💥 Momentum: {t} +{chg:.1f}%", col, body)
+    subj = f"[Aarya] 💥 Momentum: {t} +{chg:.1f}% on {vol:.1f}x vol"
+    if confidence is not None:
+        subj += f" — confidence {confidence:.0f}%"
+    return send_alert(subj, html)
+
+
+def tg_momentum_alert(result: dict, confidence: float = None,
+                      chat_id: str = "") -> tuple[bool, str]:
+    t   = _esc(result.get("ticker", "?"))
+    cur = _esc(result.get("currency", "$"))
+    rr  = result.get("rr", {})
+    chg = result.get("intraday_pct", 0)
+    vol = result.get("vol_ratio", 0)
+    conf = f"\n📊 ML confidence: <b>{confidence:.0f}%</b>" if confidence is not None else ""
+    msg = (
+        f"💥 <b>HIGH MOMENTUM</b>\n"
+        f"<b>{t}</b>  +{chg:.1f}%  ·  {vol:.1f}x vol{conf}\n"
+        f"Entry: {cur}{_esc(result.get('entry','—'))} | "
+        f"Stop: {cur}{_esc(result.get('stop','—'))} | "
+        f"T1: {cur}{_esc(rr.get('t1','—'))}\n"
+        f"<i>Breakout — move fast. Verify live.</i>"
+    )
+    return send_telegram(msg, chat_id)
+
+
+# ── TRAIL-STOP SUGGESTION (held positions, intraday) ──────────────────
+
+def send_trail_stop_email(pos: dict, monitor_dict: dict, suggested_stop: float,
+                          to_email: str = "") -> tuple[bool, str]:
+    t   = monitor_dict.get("ticker", "?")
+    cur = monitor_dict.get("currency", "$")
+    pct = monitor_dict.get("pnl_pct", 0)
+    col = "#1D9E75"
+    body = (
+        f"<div style='background:#121e30;border-left:4px solid {col};border-radius:8px;"
+        f"padding:14px;margin-bottom:14px;'>"
+        f"<div style='font-size:22px;font-weight:900;color:#fff;'>💰 {t}</div>"
+        f"<div style='font-size:15px;color:{col};font-weight:700;margin-top:4px;'>TRAIL STOP — LOCK PROFIT</div>"
+        f"<div style='color:#C9D6E3;margin-top:8px;font-size:13px;'>"
+        f"Up <b>{pct:+.1f}%</b> since entry. Suggested action: move your stop "
+        f"to <b>{cur}{suggested_stop:.2f}</b> to lock in this gain.</div></div>"
+        f"<table style='width:100%;border-collapse:collapse;'>"
+        f"<tr><td style='padding:7px 12px;background:#121e30;border:1px solid #1a2f4a;color:#4A7FA5;font-size:11px;'>CURRENT</td>"
+        f"<td style='padding:7px 12px;background:#121e30;border:1px solid #1a2f4a;color:#fff;font-weight:700;'>{cur}{monitor_dict.get('current','—')}</td></tr>"
+        f"<tr><td style='padding:7px 12px;background:#121e30;border:1px solid #1a2f4a;color:#4A7FA5;font-size:11px;'>ENTRY</td>"
+        f"<td style='padding:7px 12px;background:#121e30;border:1px solid #1a2f4a;color:#fff;font-weight:700;'>{cur}{monitor_dict.get('entry','—')}</td></tr>"
+        f"<tr><td style='padding:7px 12px;background:#121e30;border:1px solid #1a2f4a;color:#4A7FA5;font-size:11px;'>NEW STOP</td>"
+        f"<td style='padding:7px 12px;background:#121e30;border:1px solid #1a2f4a;color:{col};font-weight:700;'>{cur}{suggested_stop:.2f}</td></tr>"
+        f"</table>"
+    )
+    html = _wrap(f"💰 Trail Stop: {t} {pct:+.1f}%", col, body)
+    rcpts = [to_email] if to_email else None
+    return send_alert(f"[Aarya] 💰 Trail Stop: {t} {pct:+.1f}% — lock profit", html, recipients=rcpts)
+
+
+def tg_trail_stop(pos: dict, monitor_dict: dict, suggested_stop: float,
+                  chat_id: str = "") -> tuple[bool, str]:
+    t   = _esc(monitor_dict.get("ticker", "?"))
+    cur = _esc(monitor_dict.get("currency", "$"))
+    pct = monitor_dict.get("pnl_pct", 0)
+    msg = (
+        f"💰 <b>TRAIL STOP</b>\n"
+        f"<b>{t}</b> is up <b>{pct:+.1f}%</b>.\n"
+        f"Suggested: move stop to <b>{cur}{suggested_stop:.2f}</b> to lock in profit.\n"
+        f"Current: {cur}{_esc(monitor_dict.get('current','—'))}  |  "
+        f"Entry: {cur}{_esc(monitor_dict.get('entry','—'))}"
     )
     return send_telegram(msg, chat_id)

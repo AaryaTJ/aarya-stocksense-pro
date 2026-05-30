@@ -18,6 +18,9 @@ from config import (FUND_CATALOGUE, MARKET_CONFIGS, FOCUS_MODES,
 import notifier
 import auth
 import db
+import mldb
+import scanner_contrarian
+from ml import predictor as ml_predictor
 
 st.set_page_config(page_title="Aarya StockSense Pro", page_icon="📈",
                    layout="wide", initial_sidebar_state="auto")
@@ -559,6 +562,74 @@ def tab_picks(cfg, market):
                                 st.caption("Chart unavailable.")
                 except Exception as _card_err:
                     st.warning(f"{r.get('ticker','?')}: display error — {_card_err}")
+
+    # ── 🔻 Contrarian / Oversold-Quality picks (mean-reversion track) ────
+    st.markdown("---")
+    st.markdown("#### 🔻 Contrarian / Oversold-Quality Picks")
+    st.caption("Mean-reversion track: quality names beaten down to 52-week-range lows. "
+               "Different rules from the trend picks above.")
+    try:
+        with st.spinner("Scanning contrarian setups…"):
+            contrarian_picks = scanner_contrarian.scan_contrarian(
+                mc, {"_df": None}, cfg["portfolio"], cfg["risk_pct"])
+    except Exception as _ce:
+        st.caption(f"Contrarian scan unavailable: {_ce}")
+        contrarian_picks = []
+    if not contrarian_picks:
+        st.info("No contrarian setups in this market right now.")
+    else:
+        for p in contrarian_picks:
+            try:
+                rr = p.get("rr", {})
+                conf = None
+                try:
+                    conf = ml_predictor.score_prediction(p)
+                except Exception:
+                    pass
+                conf_html = (f"<span style='color:#FFB340;font-size:11px;font-weight:700;'>"
+                             f"ML {conf:.0f}%</span>" if conf else "")
+                card(
+                    f"<div style='background:#0a1525;border:1px solid #4A7FA5;"
+                    f"border-radius:10px;padding:12px 18px;margin-bottom:10px;'>"
+                    f"<div style='display:flex;justify-content:space-between;align-items:center;'>"
+                    f"<span style='font-size:18px;font-weight:900;color:#fff;'>{p['ticker']}</span>"
+                    f"<span style='background:#4A7FA5;color:#050d15;font-size:10px;"
+                    f"font-weight:700;padding:3px 10px;border-radius:10px;'>{p['signal']}</span></div>"
+                    f"<div style='color:#C9D6E3;font-size:12px;margin-top:6px;'>{p.get('verdict','')[:200]}</div>"
+                    f"<div style='display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:8px;font-size:12px;'>"
+                    f"<div><div style='color:#4A7FA5;font-size:10px;'>Entry</div>"
+                    f"<div style='color:#fff;font-weight:700;'>{cur}{p['entry']}</div></div>"
+                    f"<div><div style='color:#4A7FA5;font-size:10px;'>Stop</div>"
+                    f"<div style='color:#FF4D6A;font-weight:700;'>{cur}{p['stop']}</div></div>"
+                    f"<div><div style='color:#4A7FA5;font-size:10px;'>T1</div>"
+                    f"<div style='color:#FFB340;font-weight:700;'>{cur}{rr.get('t1','—')}</div></div>"
+                    f"<div><div style='color:#4A7FA5;font-size:10px;'>Win</div>"
+                    f"<div style='color:#1D9E75;font-weight:700;'>{p.get('win_prob','?')}%</div></div>"
+                    f"</div>{conf_html}</div>")
+            except Exception as _ce2:
+                st.caption(f"display: {_ce2}")
+
+    # ── 🤖 Chatbot panel — "Ask Aarya about today's picks" ─────────────
+    st.markdown("---")
+    with st.expander("🤖 Ask Aarya about today's picks", expanded=False):
+        q_key = f"chat_q_{market}"
+        a_key = f"chat_a_{market}"
+        cq, cb = st.columns([4, 1])
+        with cq:
+            question = st.text_input("Question",
+                placeholder="e.g. Why is NVDA top of the list today?",
+                label_visibility="collapsed", key=q_key)
+        with cb:
+            ask = st.button("Ask", use_container_width=True, key=f"chat_ask_{market}")
+        if ask and question.strip():
+            with st.spinner("Asking Aarya…"):
+                try:
+                    answer = notifier.get_gemini_question_answer(question.strip())
+                except Exception as _ge:
+                    answer = f"AI temporarily unavailable: {_ge}"
+            st.session_state[a_key] = answer
+        if st.session_state.get(a_key):
+            st.info(st.session_state[a_key])
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1513,6 +1584,74 @@ def show_login():
 # ══════════════════════════════════════════════════════════════════════
 def tab_admin(current_user: dict):
     st.subheader("🔐 Admin Panel")
+
+    # ── ML status banner ─────────────────────────────────────────────
+    try:
+        state = mldb.get_model_state() or {}
+        weights = state.get("weights") or {}
+        rolling = state.get("rolling_acc") or {}
+        locked  = bool(state.get("locked"))
+        if not weights:
+            badge_col, mode_lbl = "#4A7FA5", "🧊 COLD START — collecting predictions"
+            detail = "ML is logging picks; training kicks in once 30+ predictions have outcomes."
+        elif weights.get("shadow"):
+            badge_col, mode_lbl = "#FFB340", "⚪ SHADOW — alerts driven by rules"
+            detail = "Deploy gate not yet met; rules still drive alerts while ML keeps learning."
+        else:
+            badge_col, mode_lbl = "#00C48C", "✅ LIVE — ML scoring alerts"
+            acc = (weights.get("acc") or {}).get("ensemble")
+            detail = f"Walk-forward ensemble accuracy: {acc*100:.1f}%" if acc else "Ensemble live."
+
+        roll_html = ""
+        if rolling:
+            roll_html = "  ·  ".join(
+                f"{k}: <b>{(v*100):.0f}%</b>" for k, v in rolling.items() if v is not None)
+            roll_html = f"<div style='color:#4A7FA5;font-size:11px;margin-top:6px;'>Rolling hit rate — {roll_html}</div>" if roll_html else ""
+        lock_html = (" 🔒 <b>LOCKED</b>" if locked else "")
+        card(f"<div style='background:{badge_col}12;border:1px solid {badge_col};border-radius:8px;"
+             f"padding:12px 18px;margin-bottom:14px;'>"
+             f"<div style='color:{badge_col};font-weight:900;font-size:14px;'>{mode_lbl}{lock_html}</div>"
+             f"<div style='color:#C9D6E3;font-size:12px;margin-top:4px;'>{detail}</div>"
+             f"{roll_html}</div>")
+
+        c_lock1, c_lock2, c_lock3 = st.columns(3)
+        with c_lock1:
+            if not locked and weights:
+                if st.button("🔒 Lock model", use_container_width=True):
+                    ok = mldb.save_model_state(weights, rolling, locked=True)
+                    st.success("Locked — auto-weighting paused.") if ok else st.error("Save failed.")
+                    st.rerun()
+            elif locked:
+                if st.button("🔓 Unlock model", use_container_width=True):
+                    ok = mldb.save_model_state(weights, rolling, locked=False)
+                    st.success("Unlocked.") if ok else st.error("Save failed.")
+                    st.rerun()
+        with c_lock2:
+            if st.button("📊 Run backtest now", use_container_width=True):
+                with st.spinner("Backtesting (1–2 min)…"):
+                    try:
+                        from ml import backtest as bt
+                        rep = bt.check_deploy_gate()
+                        st.session_state["_bt_rep"] = rep
+                    except Exception as _bte:
+                        st.error(f"Backtest error: {_bte}")
+        with c_lock3:
+            st.caption("Predictions log lives in Supabase → `predictions` table.")
+        if st.session_state.get("_bt_rep"):
+            rep = st.session_state["_bt_rep"]
+            pf = "✅ PASS" if rep.get("pass") else "❌ FAIL"
+            st.info(
+                f"**Backtest:** {pf}  ·  hit_rate@20% = **{rep.get('hit_rate_20',0):.1f}%**  ·  "
+                f"avg_mfe = **{rep.get('avg_mfe',0):.1f}%**  ·  "
+                f"avg_return = **{rep.get('avg_return',0):.1f}%**  ·  "
+                f"sharpe = **{rep.get('sharpe',0):.2f}**  ·  "
+                f"max DD = **{rep.get('max_drawdown',0):.1f}%**  ·  "
+                f"n_trades = **{rep.get('n_trades',0)}**"
+            )
+    except Exception as _e:
+        st.caption(f"ML status unavailable: {_e}")
+
+    st.markdown("---")
 
     # ── Add New User ──────────────────────────────────────────────────
     st.markdown("##### ➕ Add New User")
