@@ -891,6 +891,12 @@ def tab_picks(cfg, market):
 def tab_copilot(cfg, market):
     st.subheader("🤖 Aarya AI Copilot — 7 Analyst Personas")
     st.caption("All 7 analyst roles summarised below. Select a role to dive deeper.")
+    st.info(
+        "**Live vs. Example data:** The **🎯 Swing Trader** persona runs a live real-time scan "
+        "every time you open it. All other personas show **representative example data** — "
+        "they illustrate the method so you understand how each analyst thinks. "
+        "For live prices on any stock, use the **🔍 Stock Checker** tab."
+    )
 
     # ── MASTER SUMMARY ─────────────────────────────────────────────────
     st.markdown("### 📋 Master Summary — Top Pick from Every Persona")
@@ -1040,7 +1046,7 @@ def tab_funds(cfg, market):
     cur = mc["currency"]
     st.subheader("📊 Mutual Funds & ETF Planner")
     st.caption("Browse top funds, load any fund by name, and simulate 30-year wealth compounding.")
-    t_cat, t_sim = st.tabs(["🗂️ Fund Catalogue", "🔢 Compounding Simulator"])
+    t_cat, t_sim, t_swp = st.tabs(["🗂️ Fund Catalogue", "🔢 Compounding Simulator (SIP)", "💸 SWP Calculator"])
 
     with t_cat:
         region = st.radio("Filter by region", ["All","US","India","Global"], horizontal=True)
@@ -1107,6 +1113,153 @@ def tab_funds(cfg, market):
         st.caption("🟢 Nominal growth · 🔵 Real purchasing power (after inflation) · 🟠 Total cash you put in. "
                    "The gap between green and orange is your actual profit. Plan targets using the blue (real) line.")
 
+    with t_swp:
+        st.markdown("### 💸 Systematic Withdrawal Plan (SWP) Calculator")
+        st.caption(
+            "SWP lets you withdraw a fixed amount every month from your invested corpus while the "
+            "remaining balance keeps growing. Used by retirees and anyone who wants regular passive income."
+        )
+
+        sw1, sw2, sw3, sw4 = st.columns(4)
+        with sw1:
+            swp_corpus = st.number_input(
+                f"Starting Corpus ({cur})", min_value=0.0, value=1_000_000.0,
+                step=10_000.0, format="%.0f",
+                help="Total amount invested / saved that you start withdrawals from."
+            )
+        with sw2:
+            swp_monthly = st.number_input(
+                f"Monthly Withdrawal ({cur})", min_value=0.0, value=5_000.0,
+                step=500.0, format="%.0f",
+                help="How much you withdraw every month."
+            )
+        with sw3:
+            swp_cagr = st.slider(
+                "Expected Return %", 4.0, 20.0, 10.0, 0.5,
+                help="Annual return your corpus earns while withdrawals are made."
+            )
+        with sw4:
+            swp_years = st.slider(
+                "Plan Duration (years)", 1, 40, 20, 1,
+                help="How many years you plan to withdraw."
+            )
+
+        # ── SWP calculation ────────────────────────────────────────────
+        monthly_rate = swp_cagr / 100 / 12
+        balance = swp_corpus
+        swp_rows = []
+        exhausted_yr = None
+        total_withdrawn = 0.0
+
+        for yr in range(1, swp_years + 1):
+            yr_start = balance
+            yr_withdrawn = 0.0
+            for _ in range(12):
+                if balance <= 0:
+                    break
+                balance += balance * monthly_rate
+                withdrawal = min(swp_monthly, balance)
+                balance -= withdrawal
+                yr_withdrawn += withdrawal
+                total_withdrawn += withdrawal
+            balance = max(balance, 0.0)
+            swp_rows.append({
+                "Year": yr,
+                "Opening Balance": round(yr_start, 0),
+                "Withdrawn": round(yr_withdrawn, 0),
+                "Closing Balance": round(balance, 0),
+                "Balance Status": "✅ Positive" if balance > 0 else "🔴 Exhausted",
+            })
+            if balance <= 0 and exhausted_yr is None:
+                exhausted_yr = yr
+
+        # ── Summary metrics ────────────────────────────────────────────
+        final_balance = swp_rows[-1]["Closing Balance"]
+        ms1, ms2, ms3, ms4 = st.columns(4)
+        ms1.metric("Starting Corpus", f"{cur}{swp_corpus:,.0f}")
+        ms2.metric("Total Withdrawn", f"{cur}{total_withdrawn:,.0f}",
+                   f"{total_withdrawn/swp_corpus*100:.1f}% of corpus" if swp_corpus > 0 else "")
+        ms3.metric("Final Balance", f"{cur}{final_balance:,.0f}",
+                   "✅ Corpus survives" if final_balance > 0 else "🔴 Corpus exhausted")
+        if exhausted_yr:
+            ms4.metric("Corpus Exhausted", f"Year {exhausted_yr}",
+                       f"After {exhausted_yr} years")
+        else:
+            ms4.metric("Corpus Lasts", f"{swp_years}+ years", "Still positive at plan end")
+
+        # ── Sustainability check ───────────────────────────────────────
+        if exhausted_yr:
+            card(
+                f"<div style='background:#2d0a0a;border-left:4px solid #FF4D6A;border-radius:8px;"
+                f"padding:12px 16px;margin-bottom:12px;'>"
+                f"<div style='color:#FF4D6A;font-weight:700;font-size:14px;'>⚠️ Corpus runs out in Year {exhausted_yr}</div>"
+                f"<div style='color:#C9D6E3;font-size:12px;margin-top:6px;'>"
+                f"Monthly withdrawal {cur}{swp_monthly:,.0f} is too high for a {swp_cagr}% return. "
+                f"Try reducing withdrawal by {cur}{swp_monthly*0.1:,.0f} or increasing return rate.</div></div>"
+            )
+        else:
+            card(
+                f"<div style='background:#0a2d1a;border-left:4px solid #00C48C;border-radius:8px;"
+                f"padding:12px 16px;margin-bottom:12px;'>"
+                f"<div style='color:#00C48C;font-weight:700;font-size:14px;'>✅ Plan is sustainable for {swp_years} years</div>"
+                f"<div style='color:#C9D6E3;font-size:12px;margin-top:6px;'>"
+                f"Your corpus of {cur}{swp_corpus:,.0f} can support {cur}{swp_monthly:,.0f}/month "
+                f"for {swp_years} years at {swp_cagr}% p.a., with {cur}{final_balance:,.0f} remaining at the end.</div></div>"
+            )
+
+        # ── Year-by-year table ─────────────────────────────────────────
+        df_swp = pd.DataFrame(swp_rows)
+        for col_name in ["Opening Balance", "Withdrawn", "Closing Balance"]:
+            df_swp[col_name] = df_swp[col_name].apply(lambda x: f"{cur}{x:,.0f}")
+        st.dataframe(df_swp, use_container_width=True, hide_index=True)
+
+        # ── Chart ──────────────────────────────────────────────────────
+        chart_yrs  = [r["Year"] for r in swp_rows]
+        # Get raw numeric values for chart
+        balances_raw = [swp_rows[i]["Closing Balance"] for i in range(len(swp_rows))]
+        withdrawn_cum = []
+        cum = 0.0
+        for r in swp_rows:
+            # parse back to float from formatted string
+            raw_val = float(str(r["Withdrawn"]).replace(cur, "").replace(",", ""))
+            cum += raw_val
+            withdrawn_cum.append(round(cum, 0))
+        # Use numeric closing balances before formatting
+        bal_numeric = [swp_rows[i]["Closing Balance"] for i in range(len(swp_rows))]
+
+        fig2 = go.Figure()
+        fig2.add_trace(go.Bar(x=chart_yrs, y=bal_numeric, name="Remaining Corpus",
+                              marker_color="#1D9E75"))
+        fig2.add_trace(go.Scatter(x=chart_yrs, y=withdrawn_cum, name="Cumulative Withdrawn",
+                                   line=dict(color="#FF7A50", width=2.5),
+                                   yaxis="y2"))
+        fig2.add_hline(y=0, line_dash="dot", line_color="#FF4D6A", line_width=1)
+        fig2.update_layout(
+            paper_bgcolor="#0F1B2D", plot_bgcolor="#0F1B2D",
+            font=dict(color="#C9D6E3"), height=360,
+            xaxis=dict(title="Year", gridcolor="#1a2f4a"),
+            yaxis=dict(title=f"Remaining Corpus ({cur})", gridcolor="#1a2f4a"),
+            yaxis2=dict(title=f"Cumulative Withdrawal ({cur})", overlaying="y",
+                        side="right", gridcolor="#1a2f4a"),
+            legend=dict(bgcolor="#080F1C", bordercolor="#1a2f4a"),
+            margin=dict(l=8, r=56, t=24, b=24),
+            barmode="overlay",
+        )
+        st.plotly_chart(fig2, use_container_width=True)
+        st.caption(
+            "🟢 Bars = remaining corpus each year · 🟠 Line = total cumulative withdrawals. "
+            "When the bars reach zero, the corpus is exhausted. "
+            "Adjust withdrawal amount or return rate to keep the bars above zero throughout."
+        )
+
+        st.info(
+            "**SWP Tips:**\n"
+            "- For retirement: keep monthly withdrawal ≤ 0.7% of corpus per month (safe withdrawal rate ~8% p.a.)\n"
+            "- India equity mutual funds: 10% LTCG tax applies on gains > ₹1 lakh/year — factor this in\n"
+            "- Increase return assumption only if invested in equity (not FD/debt funds)\n"
+            "- Review the plan yearly and adjust withdrawal amount as needed"
+        )
+
 
 # ══════════════════════════════════════════════════════════════════════
 #  TAB 4 — STOCK CHECKER
@@ -1115,7 +1268,11 @@ def tab_checker(cfg, market):
     mc  = MARKET_CONFIGS[market]
     cur = mc["currency"]
     st.subheader("🔍 Stock Checker — Predictive Analytics on Any Asset")
-    st.caption("Type any stock, crypto, ETF or index. Get trade verdict + profit probability + news + options.")
+    st.caption(
+        "Type any stock, crypto, ETF or index. Get: trade verdict · win probability · "
+        "bull/base/bear targets · fundamentals · news sentiment · AI briefing · "
+        "**options trade recommendation** · options chain. Scroll down after analysis for all sections."
+    )
 
     ex = {"🇺🇸 US Stocks":"NVDA","🇮🇳 India NSE":"RELIANCE.NS","₿ Crypto":"ETH-USD",
           "🇬🇧 UK":"SHEL.L","🇪🇺 Europe":"SAP.DE","🇨🇦 Canada":"SHOP.TO","🇯🇵 Japan":"7203.T"}
@@ -1300,8 +1457,10 @@ def tab_checker(cfg, market):
 
     # Options
     if not mc.get("is_crypto"):
+        st.markdown("---\n### 🎯 Options — Trade Recommendation & Chain")
+        st.caption("Below: AI-calculated options trade recommendation (CALL or PUT) + full options chain. US stocks only.")
         # ── 🎯 Options Trade Recommendation ──────────────────────────────
-        st.markdown("#### 🎯 Options Trade Recommendation")
+        st.markdown("#### Options Trade Recommendation")
         if r:
             try:
                 with st.spinner("Calculating options recommendation…"):
