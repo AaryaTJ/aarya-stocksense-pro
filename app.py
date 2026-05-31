@@ -1480,46 +1480,131 @@ def tab_checker(cfg, market):
             _earn_warn = (" &#9888; <b style='color:#FFB340;'>Earnings in window</b>"
                           if _orec.get("earnings_in_window") else "")
             _delta_str = f"Delta {_orec['delta']:.2f}"
-            _theta_str = f"  Theta {_orec['theta']:.3f}/day" if _orec.get("theta") else ""
+            _theta_str = f"  Theta {cur}{abs(_orec['theta']):.3f}/day" if _orec.get("theta") else ""
             _vega_str  = f"  Vega {_orec['vega']:.3f}" if _orec.get("vega") else ""
+
+            # ── Contract summary card ───────────────────────────────────────
             card(
                 f"<div style='background:#0a1525;border:2px solid {_ocol};"
                 f"border-radius:10px;padding:14px 18px;margin-bottom:12px;'>"
                 f"<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;'>"
                 f"<span style='font-size:16px;font-weight:900;color:#fff;'>"
-                f"Target {ticker} {_odir}</span>"
+                f"{ticker} — {_odir} Contract</span>"
                 f"<span style='background:{_ocol};color:#050d15;font-size:11px;"
                 f"font-weight:700;padding:3px 12px;border-radius:10px;'>{_odir}</span></div>"
                 f"<div style='display:grid;grid-template-columns:repeat(3,1fr);gap:8px;font-size:12px;margin-bottom:10px;'>"
                 f"<div><div style='color:#4A7FA5;font-size:10px;'>Contract</div>"
                 f"<div style='color:#fff;font-weight:700;'>{cur}{_orec['strike']:.2f} {_odir} "
                 f"{_orec['expiry']} ({_orec['dte']}DTE)</div></div>"
-                f"<div><div style='color:#4A7FA5;font-size:10px;'>Entry Premium</div>"
-                f"<div style='color:#fff;font-weight:700;'>{cur}{_orec['premium_entry']:.2f} / contract</div></div>"
-                f"<div><div style='color:#4A7FA5;font-size:10px;'>Position Size</div>"
-                f"<div style='color:#FFB340;font-weight:700;'>{_orec['contracts']} contracts "
-                f"(max {cur}{_orec['max_risk_usd']:,.0f})</div></div>"
-                f"</div>"
-                f"<div style='display:grid;grid-template-columns:repeat(3,1fr);gap:8px;font-size:12px;margin-bottom:10px;'>"
-                f"<div><div style='color:#4A7FA5;font-size:10px;'>Target Premium</div>"
-                f"<div style='color:#1D9E75;font-weight:700;'>{cur}{_orec['premium_target']:.2f} "
-                f"(+{_orec['pnl_pct_at_t1']:.0f}%)</div></div>"
-                f"<div><div style='color:#4A7FA5;font-size:10px;'>Stop Premium</div>"
-                f"<div style='color:#FF4D6A;font-weight:700;'>{cur}{_orec['premium_stop']:.2f} (-50%)</div></div>"
-                f"<div><div style='color:#4A7FA5;font-size:10px;'>Stock Breakeven</div>"
-                f"<div style='color:#FFB340;font-weight:700;'>{cur}{_orec['breakeven_stock']:.2f}</div></div>"
+                f"<div><div style='color:#4A7FA5;font-size:10px;'>Entry Premium (pay this)</div>"
+                f"<div style='color:#FFB340;font-weight:700;font-size:14px;'>"
+                f"{cur}{_orec['premium_entry']:.2f} / contract</div></div>"
+                f"<div><div style='color:#4A7FA5;font-size:10px;'>Contracts × Max Risk</div>"
+                f"<div style='color:#FFB340;font-weight:700;'>{_orec['contracts']} × "
+                f"= {cur}{_orec['max_risk_usd']:,.0f} total</div></div>"
                 f"</div>"
                 f"<div style='background:#121e30;border-radius:6px;padding:8px 12px;font-size:11px;"
                 f"color:#C9D6E3;margin-bottom:8px;'>"
                 f"{_delta_str}{_theta_str}{_vega_str} &nbsp;|&nbsp; "
                 f"IV: {_orec['iv']:.1f}% "
                 f"<span style='color:{_iv_col};font-weight:700;'>({_iv_lbl})</span>"
+                f"&nbsp;|&nbsp; Stock breakeven: {cur}{_orec['breakeven_stock']:.2f}"
                 f"{_earn_warn}</div>"
-                f"<div style='color:#C9D6E3;font-size:11px;line-height:1.5;'>"
-                f"{_orec.get('verdict','')}</div>"
                 f"</div>"
             )
-            st.caption("Options involve significant risk. Planning tool only — "
+
+            # ── TRADING PLAN — explicit buy/sell/stop rules ─────────────────
+            _mhd   = _orec.get("max_hold_days")
+            _ebd   = _orec.get("exit_by_date", "")
+            _pt1   = _orec["premium_t1"]
+            _pt2   = _orec.get("premium_t2")
+            _pstop = _orec["premium_stop"]
+            _ps1   = _orec.get("pnl_pct_at_t1", 0)
+            _ps2   = _orec.get("pnl_pct_at_t2", 0)
+            _t1s   = _orec.get("t1_stock_price", "—")
+            _t2s   = _orec.get("t2_stock_price", "—")
+
+            _plan_rows = (
+                f"<tr>"
+                f"<td style='padding:8px 12px;background:#0e2a1f;border:1px solid #1a2f4a;"
+                f"color:#00C48C;font-weight:700;font-size:12px;'>🟢 BUY NOW</td>"
+                f"<td style='padding:8px 12px;background:#0e2a1f;border:1px solid #1a2f4a;"
+                f"color:#fff;font-size:12px;'>Enter {_orec['contracts']} contract(s) at "
+                f"<b>{cur}{_orec['premium_entry']:.2f}</b> premium each (max {cur}{_orec['max_risk_usd']:,.0f})</td>"
+                f"<td style='padding:8px 12px;background:#0e2a1f;border:1px solid #1a2f4a;"
+                f"color:#4A7FA5;font-size:11px;'>Stock currently at {cur}{_orec.get('t1_stock_price') and r.get('price','—') or '—'}</td>"
+                f"</tr>"
+                f"<tr>"
+                f"<td style='padding:8px 12px;background:#121e30;border:1px solid #1a2f4a;"
+                f"color:#FFB340;font-weight:700;font-size:12px;'>💰 SELL HALF at T1</td>"
+                f"<td style='padding:8px 12px;background:#121e30;border:1px solid #1a2f4a;"
+                f"color:#FFB340;font-size:12px;'>When premium ≥ <b>{cur}{_pt1:.2f}</b> "
+                f"(+{_ps1:.0f}% profit)</td>"
+                f"<td style='padding:8px 12px;background:#121e30;border:1px solid #1a2f4a;"
+                f"color:#4A7FA5;font-size:11px;'>Stock near {cur}{_t1s}</td>"
+                f"</tr>"
+            )
+            if _pt2:
+                _plan_rows += (
+                    f"<tr>"
+                    f"<td style='padding:8px 12px;background:#0a1525;border:1px solid #1a2f4a;"
+                    f"color:#1D9E75;font-weight:700;font-size:12px;'>🎯 SELL REST at T2</td>"
+                    f"<td style='padding:8px 12px;background:#0a1525;border:1px solid #1a2f4a;"
+                    f"color:#1D9E75;font-size:12px;'>When premium ≥ <b>{cur}{_pt2:.2f}</b> "
+                    f"(+{_ps2:.0f}% profit)</td>"
+                    f"<td style='padding:8px 12px;background:#0a1525;border:1px solid #1a2f4a;"
+                    f"color:#4A7FA5;font-size:11px;'>Stock near {cur}{_t2s}</td>"
+                    f"</tr>"
+                )
+            _plan_rows += (
+                f"<tr>"
+                f"<td style='padding:8px 12px;background:#2d0a0a;border:1px solid #1a2f4a;"
+                f"color:#FF4D6A;font-weight:700;font-size:12px;'>🛑 STOP LOSS</td>"
+                f"<td style='padding:8px 12px;background:#2d0a0a;border:1px solid #1a2f4a;"
+                f"color:#FF4D6A;font-size:12px;'>EXIT ALL if premium drops to <b>{cur}{_pstop:.2f}</b> "
+                f"(-50%). No waiting — exit immediately.</td>"
+                f"<td style='padding:8px 12px;background:#2d0a0a;border:1px solid #1a2f4a;"
+                f"color:#4A7FA5;font-size:11px;'>Protects remaining capital</td>"
+                f"</tr>"
+            )
+            if _mhd and _ebd:
+                _plan_rows += (
+                    f"<tr>"
+                    f"<td style='padding:8px 12px;background:#1a1a0a;border:1px solid #1a2f4a;"
+                    f"color:#FFB340;font-weight:700;font-size:12px;'>⏱ TIME STOP</td>"
+                    f"<td style='padding:8px 12px;background:#1a1a0a;border:1px solid #1a2f4a;"
+                    f"color:#C9D6E3;font-size:12px;'>Exit by <b>{_ebd}</b> ({_mhd} days max). "
+                    f"Theta decay accelerates — don't hold longer.</td>"
+                    f"<td style='padding:8px 12px;background:#1a1a0a;border:1px solid #1a2f4a;"
+                    f"color:#4A7FA5;font-size:11px;'>Even if undecided — sell it</td>"
+                    f"</tr>"
+                )
+
+            card(
+                f"<div style='background:#080F1C;border:1px solid {_ocol}33;"
+                f"border-radius:10px;padding:14px 18px;margin-bottom:12px;'>"
+                f"<div style='font-size:13px;font-weight:900;color:{_ocol};margin-bottom:10px;'>"
+                f"📋 OPTIONS TRADING PLAN — {ticker} {_odir}</div>"
+                f"<table style='width:100%;border-collapse:collapse;'>"
+                f"<tr style='background:#0a1525;'>"
+                f"<th style='padding:6px 12px;color:#4A7FA5;font-size:10px;text-align:left;width:20%;'>Action</th>"
+                f"<th style='padding:6px 12px;color:#4A7FA5;font-size:10px;text-align:left;width:50%;'>Rule</th>"
+                f"<th style='padding:6px 12px;color:#4A7FA5;font-size:10px;text-align:left;width:30%;'>Reference</th>"
+                f"</tr>"
+                + _plan_rows +
+                f"</table>"
+                f"</div>"
+            )
+
+            if _orec.get("earnings_in_window"):
+                st.warning("⚠️ Earnings fall inside the contract window — this is a binary event. "
+                           "The option can gain OR lose 50%+ on earnings day alone. "
+                           "Size position at half the normal amount.")
+            if _iv_lbl == "HIGH":
+                st.warning("⚠️ Implied Volatility is HIGH right now. Premium is expensive. "
+                           "Wait for a 1-2 day pullback in the stock to enter at lower IV and lower cost.")
+
+            st.caption("Options involve significant risk. This is a planning tool — "
                        "verify live prices before placing any trade. US stocks only.")
 
         # ── 📉 Options Chain Snapshot (raw data) ─────────────────────────

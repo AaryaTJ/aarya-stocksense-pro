@@ -1052,37 +1052,80 @@ def recommend_option(ticker: str, stock_signal: dict, portfolio: float,
         except Exception:
             iv_label = "NORMAL"
 
-        # exit target using delta approximation
+        # ── Exit targets using delta + simple gamma correction ────────────
+        # At T1: stock moved from price → t1_price. Delta increases as option
+        # goes further in-the-money. We add a small gamma bump (+0.10) for T2.
+        t2_price = stock_signal.get("t2_price") or stock_signal.get("rr", {}).get("t2")
+
         if t1_price and cur_price:
-            stock_move  = (t1_price - price) if direction == "CALL" else (price - t1_price)
-            prem_target = round(entry_prem + delta * stock_move, 2)
+            move_t1  = (t1_price - price) if direction == "CALL" else (price - t1_price)
+            move_t1  = max(move_t1, 0)
+            prem_t1  = round(entry_prem + delta * move_t1, 2)
+
+            # T2 uses delta + 0.10 gamma correction (option is deeper ITM by then)
+            if t2_price:
+                delta_t2 = min(delta + 0.10, 0.90)
+                move_t2  = (t2_price - price) if direction == "CALL" else (price - t2_price)
+                move_t2  = max(move_t2, 0)
+                prem_t2  = round(entry_prem + delta_t2 * move_t2, 2)
+            else:
+                prem_t2 = round(prem_t1 * 1.5, 2)
         else:
-            prem_target = round(entry_prem * 2.0, 2)  # rough 2× target
+            prem_t1  = round(entry_prem * 2.0, 2)
+            prem_t2  = round(entry_prem * 3.0, 2)
 
         prem_stop = round(entry_prem * 0.50, 2)
 
-        # breakeven stock price
+        # Theta-based max hold: how many days before 50% of entry premium decays?
+        # If theta unavailable, estimate from DTE (daily theta ≈ premium / DTE * 0.5 for ATM)
+        max_hold_days = None
+        if theta and abs(theta) > 0:
+            max_hold_days = max(3, int(entry_prem * 0.5 / abs(theta)))
+        elif dte > 0:
+            est_daily_theta = entry_prem / dte * 0.5
+            if est_daily_theta > 0:
+                max_hold_days = max(3, int(entry_prem * 0.5 / est_daily_theta))
+        if max_hold_days:
+            max_hold_days = min(max_hold_days, dte - 5)  # never hold to within 5 days of expiry
+
+        # Exit-by date
+        from datetime import timedelta
+        exit_by_date = (datetime.today() + timedelta(days=max_hold_days)).strftime("%d %b") if max_hold_days else None
+
+        # Breakeven stock price
         breakeven = round(strike + entry_prem, 2) if direction == "CALL" else round(strike - entry_prem, 2)
 
-        # position sizing: max 2% of portfolio per trade
+        # Position sizing: max risk_pct% of portfolio per trade
         max_risk_dollars = portfolio * (risk_pct / 100)
         n_contracts = max(1, int(math.floor(max_risk_dollars / (entry_prem * 100))))
         actual_risk  = round(n_contracts * entry_prem * 100, 2)
 
-        pnl_pct = round((prem_target - entry_prem) / entry_prem * 100, 1) if entry_prem > 0 else 0
+        pnl_pct_t1 = round((prem_t1 - entry_prem) / entry_prem * 100, 1) if entry_prem > 0 else 0
+        pnl_pct_t2 = round((prem_t2 - entry_prem) / entry_prem * 100, 1) if entry_prem > 0 else 0
 
-        # verdict sentence
-        parts = [
-            f"{'ATM' if win_prob < 70 else 'OTM'} {direction.lower()} on {ticker} "
-            f"({signal}; {win_prob}% confidence).",
-            f"Target premium +{pnl_pct}% if stock reaches {stock_signal.get('currency','$')}{t1_price}.",
+        cur_sym = stock_signal.get("currency", "$")
+
+        # ── Trading plan verdict (explicit, actionable) ────────────────
+        plan_lines = [
+            f"{'ATM' if win_prob < 70 else 'Slightly OTM'} {direction} on {ticker} — {win_prob}% confidence.",
+            f"BUY: {n_contracts} contract(s) at {cur_sym}{entry_prem:.2f} premium (max risk {cur_sym}{actual_risk:,.0f}).",
+            f"SELL HALF at T1: when premium hits {cur_sym}{prem_t1:.2f} (+{pnl_pct_t1:.0f}%) — stock near {cur_sym}{t1_price}.",
         ]
+        if t2_price:
+            plan_lines.append(
+                f"SELL REST at T2: when premium hits {cur_sym}{prem_t2:.2f} (+{pnl_pct_t2:.0f}%) — stock near {cur_sym}{t2_price}."
+            )
+        plan_lines.append(
+            f"STOP LOSS: exit ALL if premium drops to {cur_sym}{prem_stop:.2f} (-50%). No exceptions."
+        )
+        if exit_by_date:
+            plan_lines.append(
+                f"TIME STOP: exit by {exit_by_date} ({max_hold_days} days) — theta accelerates after that."
+            )
         if earnings_in_window:
-            parts.append("⚠ Earnings fall inside contract window — binary risk.")
+            plan_lines.append("CAUTION: Earnings inside contract window — binary event risk.")
         if iv_label == "HIGH":
-            parts.append("⚠ IV elevated — premium is rich; consider waiting for IV dip.")
-        if theta:
-            parts.append(f"Theta decay: {stock_signal.get('currency','$')}{abs(theta):.2f}/day.")
+            plan_lines.append("CAUTION: IV is elevated — wait for a down-day to enter at lower premium.")
 
         return {
             "ticker":             ticker,
@@ -1091,8 +1134,10 @@ def recommend_option(ticker: str, stock_signal: dict, portfolio: float,
             "expiry":             exp,
             "dte":                dte,
             "premium_entry":      round(entry_prem, 2),
-            "premium_target":     prem_target,
+            "premium_t1":         prem_t1,
+            "premium_t2":         prem_t2,
             "premium_stop":       prem_stop,
+            "premium_target":     prem_t1,      # backward-compat alias
             "breakeven_stock":    breakeven,
             "contracts":          n_contracts,
             "max_risk_usd":       actual_risk,
@@ -1102,8 +1147,13 @@ def recommend_option(ticker: str, stock_signal: dict, portfolio: float,
             "iv":                 iv,
             "iv_label":           iv_label,
             "earnings_in_window": earnings_in_window,
-            "pnl_pct_at_t1":     pnl_pct,
-            "verdict":            " ".join(parts),
+            "pnl_pct_at_t1":     pnl_pct_t1,
+            "pnl_pct_at_t2":     pnl_pct_t2,
+            "max_hold_days":      max_hold_days,
+            "exit_by_date":       exit_by_date,
+            "t1_stock_price":     t1_price,
+            "t2_stock_price":     t2_price,
+            "verdict":            " ".join(plan_lines),
             "track":              "options",
         }
     except Exception as e:

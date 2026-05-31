@@ -1090,7 +1090,20 @@ def send_options_recommendation_email(rec: dict) -> tuple[bool, str]:
         + (f"Greeks: Delta {rec['delta']:.2f}"
            + (f" | Theta {rec['theta']:.3f}/day" if rec.get("theta") else "")
            + f" | IV {rec['iv']:.1f}% ({rec.get('iv_label','NORMAL')})"
-           + ("  EARNINGS IN WINDOW" if rec.get("earnings_in_window") else ""))
+           + ("  ⚠ EARNINGS IN WINDOW" if rec.get("earnings_in_window") else ""))
+        + "</div>"
+        f"<div style='margin-top:10px;background:#0a1525;border-radius:6px;padding:10px 12px;"
+        f"font-size:11px;color:#C9D6E3;line-height:1.8;'>"
+        f"<b style='color:#FFB340;'>TRADING PLAN:</b><br>"
+        f"🟢 BUY: {rec['contracts']} contract(s) at ${rec['premium_entry']:.2f} (max ${rec['max_risk_usd']:,.0f})<br>"
+        f"💰 SELL HALF at T1: premium ≥ <b>${rec.get('premium_t1', rec['premium_target']):.2f}</b> "
+        f"(+{rec['pnl_pct_at_t1']:.0f}%) — stock near ${rec.get('t1_stock_price','—')}<br>"
+        + (f"🎯 SELL REST at T2: premium ≥ <b>${rec.get('premium_t2',0):.2f}</b> "
+           f"(+{rec.get('pnl_pct_at_t2',0):.0f}%) — stock near ${rec.get('t2_stock_price','—')}<br>"
+           if rec.get("premium_t2") else "")
+        + f"🛑 STOP LOSS: exit ALL if premium drops to ${rec['premium_stop']:.2f} (-50%)<br>"
+        + (f"⏱ TIME STOP: exit by {rec['exit_by_date']} ({rec['max_hold_days']} days max)"
+           if rec.get("exit_by_date") else "")
         + "</div>"
         f"<div style='margin-top:8px;font-size:12px;color:#C9D6E3;line-height:1.5;'>"
         f"{rec.get('verdict','')}</div>"
@@ -1107,18 +1120,29 @@ def tg_options_recommendation(rec: dict, chat_id: str = "") -> tuple[bool, str]:
     if not rec or "skip_reason" in rec:
         return False, rec.get("skip_reason", "no rec") if rec else "no rec"
     cur  = "$"
-    earn = " EARNINGS IN WINDOW" if rec.get("earnings_in_window") else ""
+    earn = " ⚠ EARNINGS IN WINDOW" if rec.get("earnings_in_window") else ""
+    t2_line = (
+        f"🎯 SELL REST at T2: {cur}{rec['premium_t2']:.2f} (+{rec.get('pnl_pct_at_t2',0):.0f}%) "
+        f"stock→{cur}{rec.get('t2_stock_price','—')}\n"
+    ) if rec.get("premium_t2") else ""
+    time_stop = (
+        f"⏱ TIME STOP: exit by {rec['exit_by_date']} ({rec['max_hold_days']}d max)\n"
+    ) if rec.get("exit_by_date") else ""
     msg  = (
         f"<b>Options Trade: {rec['ticker']} {rec['direction']}</b>\n"
         f"Contract: <b>{cur}{rec['strike']:.2f} {rec['direction']}</b> "
         f"exp {rec['expiry']} ({rec['dte']}DTE)\n"
-        f"Entry: <b>{cur}{rec['premium_entry']:.2f}</b>  "
-        f"Target: <b>{cur}{rec['premium_target']:.2f} (+{rec['pnl_pct_at_t1']:.0f}%)</b>\n"
-        f"Stop: {cur}{rec['premium_stop']:.2f} (-50%)  "
-        f"Breakeven: {cur}{rec['breakeven_stock']:.2f}\n"
-        f"Size: {rec['contracts']} contracts | max risk {cur}{rec['max_risk_usd']:,.0f}\n"
-        f"Delta {rec['delta']:.2f} | IV {rec['iv']:.1f}% ({rec.get('iv_label','NORMAL')}){earn}\n\n"
-        f"<i>{rec.get('verdict','')[:200]}</i>"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🟢 BUY: {rec['contracts']} contract(s) at <b>{cur}{rec['premium_entry']:.2f}</b> "
+        f"(max risk {cur}{rec['max_risk_usd']:,.0f})\n"
+        f"💰 SELL HALF at T1: <b>{cur}{rec.get('premium_t1', rec['premium_target']):.2f}</b> "
+        f"(+{rec['pnl_pct_at_t1']:.0f}%) stock→{cur}{rec.get('t1_stock_price','—')}\n"
+        + t2_line +
+        f"🛑 STOP: exit ALL if premium ≤ <b>{cur}{rec['premium_stop']:.2f}</b> (-50%)\n"
+        + time_stop +
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"Delta {rec['delta']:.2f} | IV {rec['iv']:.1f}% ({rec.get('iv_label','NORMAL')})"
+        f" | Breakeven {cur}{rec['breakeven_stock']:.2f}{earn}"
     )
     return send_telegram(msg, chat_id)
 
