@@ -1496,94 +1496,91 @@ def tab_checker(cfg, market):
 
     # Fundamentals + expandable description
     if not fd.get("error"):
-        st.markdown("---")
-        with st.expander("📋 Company Profile & Fundamentals", expanded=False):
-            fa,fb,fc,fd4 = st.columns(4)
-            fa.metric("Revenue Growth",  fmt(fd.get("rev_growth"),suffix="%",decimals=1) if fd.get("rev_growth") is not None else "N/A")
-            fb.metric("Earnings Growth", fmt(fd.get("earn_growth"),suffix="%",decimals=1) if fd.get("earn_growth") is not None else "N/A")
-            fc.metric("Analyst Rating",  fd.get("rec","N/A"))
-            fd4.metric("Inst. Holding",  fmt(fd.get("inst_pct"),suffix="%",decimals=1) if fd.get("inst_pct") is not None else "N/A")
-            st.caption(f"Sector: {fd.get('sector','—')}  ·  Industry: {fd.get('industry','—')}  ·  "
-                       f"P/E: {fd.get('pe','—')}  ·  Forward P/E: {fd.get('fwd_pe','—')}  ·  "
-                       f"PEG: {fd.get('peg','—')}  ·  Analyst Target: {cur}{fd.get('target','—')} "
-                       f"({fd.get('analysts',0)} analysts)")
-            desc = fd.get("description", "")
-            if desc:
-                st.markdown(f"<div style='color:#C9D6E3;font-size:13px;line-height:1.8;margin-top:8px;'>{desc}</div>",
+        st.markdown("---\n### 📋 Company Profile")
+        fa,fb,fc,fd4 = st.columns(4)
+        fa.metric("Revenue Growth",  fmt(fd.get("rev_growth"),suffix="%",decimals=1) if fd.get("rev_growth") is not None else "N/A")
+        fb.metric("Earnings Growth", fmt(fd.get("earn_growth"),suffix="%",decimals=1) if fd.get("earn_growth") is not None else "N/A")
+        fc.metric("Analyst Rating",  fd.get("rec","N/A"))
+        fd4.metric("Inst. Holding",  fmt(fd.get("inst_pct"),suffix="%",decimals=1) if fd.get("inst_pct") is not None else "N/A")
+        st.caption(f"Sector: {fd.get('sector','—')}  ·  Industry: {fd.get('industry','—')}  ·  "
+                   f"P/E: {fd.get('pe','—')}  ·  Forward P/E: {fd.get('fwd_pe','—')}  ·  "
+                   f"PEG: {fd.get('peg','—')}  ·  Analyst Target: {cur}{fd.get('target','—')} "
+                   f"({fd.get('analysts',0)} analysts)")
+        desc = fd.get("description", "")
+        if desc:
+            with st.expander("📖 Full Company Description", expanded=False):
+                st.markdown(f"<div style='color:#C9D6E3;font-size:13px;line-height:1.8;'>{desc}</div>",
                             unsafe_allow_html=True)
 
     # News — Alpha Vantage first, fallback to yfinance
-    st.markdown("---")
+    st.markdown("---\n### 📰 News & Sentiment")
     try:
         av_news = eng.fetch_news_av(ticker, mc.get("suffix", ""))
     except Exception:
         av_news = []
     display_news = av_news if av_news else (nws or [])
     news_source  = "Alpha Vantage" if av_news else "Yahoo Finance"
-    _news_label  = f"📰 News & Sentiment  ({len(display_news)} articles)" if display_news else "📰 News & Sentiment"
-    with st.expander(_news_label, expanded=False):
-        if display_news:
-            st.caption(f"Source: {news_source}")
-            for n in display_news:
-                summary = n.get("summary", "")
-                score   = n.get("score")
-                score_txt = f" · score {score:+.3f}" if score is not None else ""
-                if summary:
-                    with st.expander(f"{n['sent']}  {n['title'][:80]}{'…' if len(n['title'])>80 else ''}", expanded=False):
-                        card(f"<div style='background:#0a1525;border-left:3px solid {n['col']};"
-                             f"border-radius:6px;padding:10px 14px;'>"
-                             f"<span style='color:{n['col']};font-size:11px;font-weight:700;'>{n['sent']}{score_txt}</span>"
-                             f"&nbsp;<a href='{n['link']}' target='_blank' style='color:#C9D6E3;font-size:13px;font-weight:600;'>{n['title']}</a>"
-                             f"<span style='color:#4A7FA5;font-size:10px;'> — {n['pub']}</span>"
-                             f"<div style='color:#C9D6E3;font-size:12px;line-height:1.6;margin-top:8px;'>{summary[:400]}</div>"
-                             f"</div>")
-                else:
+    if display_news:
+        st.caption(f"Source: {news_source} · {len(display_news)} articles")
+        for n in display_news:
+            summary = n.get("summary", "")
+            score   = n.get("score")
+            score_txt = f" · score {score:+.3f}" if score is not None else ""
+            if summary:
+                with st.expander(f"{n['sent']}  {n['title'][:80]}{'…' if len(n['title'])>80 else ''}", expanded=False):
                     card(f"<div style='background:#0a1525;border-left:3px solid {n['col']};"
-                         f"border-radius:6px;padding:8px 14px;margin-bottom:6px;'>"
-                         f"<span style='color:{n['col']};font-size:11px;font-weight:700;'>{n['sent']}</span>"
-                         f"&nbsp;<a href='{n['link']}' target='_blank' style='color:#C9D6E3;font-size:13px;'>{n['title']}</a>"
-                         f"<span style='color:#4A7FA5;font-size:10px;'> — {n['pub']}</span></div>")
-        else:
-            st.info("No news found for this ticker.")
+                         f"border-radius:6px;padding:10px 14px;'>"
+                         f"<span style='color:{n['col']};font-size:11px;font-weight:700;'>{n['sent']}{score_txt}</span>"
+                         f"&nbsp;<a href='{n['link']}' target='_blank' style='color:#C9D6E3;font-size:13px;font-weight:600;'>{n['title']}</a>"
+                         f"<span style='color:#4A7FA5;font-size:10px;'> — {n['pub']}</span>"
+                         f"<div style='color:#C9D6E3;font-size:12px;line-height:1.6;margin-top:8px;'>{summary[:400]}</div>"
+                         f"</div>")
+            else:
+                card(f"<div style='background:#0a1525;border-left:3px solid {n['col']};"
+                     f"border-radius:6px;padding:8px 14px;margin-bottom:6px;'>"
+                     f"<span style='color:{n['col']};font-size:11px;font-weight:700;'>{n['sent']}</span>"
+                     f"&nbsp;<a href='{n['link']}' target='_blank' style='color:#C9D6E3;font-size:13px;'>{n['title']}</a>"
+                     f"<span style='color:#4A7FA5;font-size:10px;'> — {n['pub']}</span></div>")
+    else:
+        st.info("No news found for this ticker.")
 
     # Gemini AI
-    st.markdown("---")
-    with st.expander("🤖 Gemini AI Briefing & Q&A", expanded=False):
-        gcol1, gcol2 = st.columns([1, 1])
-        with gcol1:
-            if st.button("✨ Generate AI Briefing", type="primary", use_container_width=True):
-                with st.spinner("Asking Gemini…"):
-                    try:
-                        briefing = notifier.get_gemini_briefing(ticker, r)
-                    except Exception as _ge:
-                        briefing = f"Gemini error: {_ge}"
-                st.session_state[f"briefing_{ticker}"] = briefing
-
-        briefing_text = st.session_state.get(f"briefing_{ticker}", "")
-        if briefing_text:
-            card(f"<div style='background:#0a1525;border:1px solid #1a2f4a;border-radius:8px;"
-                 f"padding:14px 18px;color:#C9D6E3;font-size:13px;line-height:1.7;'>"
-                 f"<div style='color:#9B59B6;font-size:11px;font-weight:700;margin-bottom:6px;'>"
-                 f"GEMINI AI · {ticker}</div>{briefing_text}</div>")
-
-        st.markdown("**💬 Ask Gemini about this stock:**")
-        q_key = f"q_{ticker}"
-        question = st.text_input("e.g. What are the main risks? What does this company do?",
-                                  key=q_key, label_visibility="collapsed",
-                                  placeholder="Ask anything about this stock…")
-        if st.button("Ask", key=f"ask_{ticker}") and question:
-            with st.spinner("Gemini is thinking…"):
+    st.markdown("---\n### 🤖 Gemini AI Briefing")
+    gcol1, gcol2 = st.columns([1, 1])
+    with gcol1:
+        if st.button("✨ Generate AI Briefing", type="primary", use_container_width=True):
+            with st.spinner("Asking Gemini…"):
                 try:
-                    answer = notifier.get_gemini_answer(ticker, question, r)
-                except Exception as _ge2:
-                    answer = f"Gemini error: {_ge2}"
-            st.session_state[f"ans_{ticker}"] = answer
+                    briefing = notifier.get_gemini_briefing(ticker, r)
+                except Exception as _ge:
+                    briefing = f"Gemini error: {_ge}"
+            st.session_state[f"briefing_{ticker}"] = briefing
 
-        ans = st.session_state.get(f"ans_{ticker}", "")
-        if ans:
-            card(f"<div style='background:#0a1525;border-left:3px solid #9B59B6;"
-                 f"border-radius:6px;padding:12px 16px;color:#C9D6E3;font-size:13px;line-height:1.7;'>"
-                 f"<b style='color:#9B59B6;'>Gemini:</b> {ans}</div>")
+    briefing_text = st.session_state.get(f"briefing_{ticker}", "")
+    if briefing_text:
+        card(f"<div style='background:#0a1525;border:1px solid #1a2f4a;border-radius:8px;"
+             f"padding:14px 18px;color:#C9D6E3;font-size:13px;line-height:1.7;'>"
+             f"<div style='color:#9B59B6;font-size:11px;font-weight:700;margin-bottom:6px;'>"
+             f"GEMINI AI · {ticker}</div>{briefing_text}</div>")
+
+    st.markdown("**💬 Ask Gemini about this stock:**")
+    q_key = f"q_{ticker}"
+    question = st.text_input("e.g. What are the main risks? What does this company do?",
+                              key=q_key, label_visibility="collapsed",
+                              placeholder="Ask anything about this stock…")
+    if st.button("Ask", key=f"ask_{ticker}") and question:
+        with st.spinner("Gemini is thinking…"):
+            try:
+                answer = notifier.get_gemini_answer(ticker, question, r)
+            except Exception as _ge2:
+                answer = f"Gemini error: {_ge2}"
+        st.session_state[f"ans_{ticker}"] = answer
+
+    ans = st.session_state.get(f"ans_{ticker}", "")
+    if ans:
+        card(f"<div style='background:#0a1525;border-left:3px solid #9B59B6;"
+             f"border-radius:6px;padding:12px 16px;color:#C9D6E3;font-size:13px;line-height:1.7;'>"
+             f"<b style='color:#9B59B6;'>Gemini:</b> {ans}</div>")
 
     # Options
     if not mc.get("is_crypto"):
