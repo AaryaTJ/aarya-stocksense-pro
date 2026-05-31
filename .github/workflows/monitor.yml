@@ -47,6 +47,9 @@ jobs:
           SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY:         ${{ secrets.SUPABASE_KEY }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          ALPACA_API_KEY:       ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_SECRET:        ${{ secrets.ALPACA_SECRET }}
+          ALPACA_BASE_URL:      https://paper-api.alpaca.markets/v2
 
       - name: Check Telegram messages
         run: python bot_poll.py
@@ -59,3 +62,6 @@ jobs:
           SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY:         ${{ secrets.SUPABASE_KEY }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          ALPACA_API_KEY:       ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_SECRET:        ${{ secrets.ALPACA_SECRET }}
+          ALPACA_BASE_URL:      https://paper-api.alpaca.markets/v2

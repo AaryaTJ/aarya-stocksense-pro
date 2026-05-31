@@ -1607,6 +1607,77 @@ def tab_checker(cfg, market):
             st.caption("Options involve significant risk. This is a planning tool — "
                        "verify live prices before placing any trade. US stocks only.")
 
+            # ── 📡 Live Premium Monitor ───────────────────────────────────────
+            st.markdown("---\n#### 📡 Live Premium Monitor")
+            st.caption("Check the current option premium right now and get a SELL / HOLD / STOP signal.")
+            _lpm_key = f"lpm_{ticker}_{_orec.get('expiry','')}"
+            if st.button("📡 Check Current Premium Now", key=f"lpm_btn_{ticker}",
+                         type="primary", use_container_width=False):
+                with st.spinner("Fetching live option price…"):
+                    try:
+                        import alpaca_client as _alp
+                        _status = _alp.check_option_status(_orec)
+                        st.session_state[_lpm_key] = _status
+                    except Exception as _lpm_e:
+                        st.session_state[_lpm_key] = {
+                            "status": "ERROR", "action": str(_lpm_e),
+                            "color": "#4A7FA5", "current_mid": None,
+                            "message": str(_lpm_e),
+                        }
+
+            _lpm = st.session_state.get(_lpm_key)
+            if _lpm:
+                _sc   = _lpm["color"]
+                _smid = _lpm.get("current_mid")
+                _spnl = _lpm.get("pnl_pct")
+                _src  = _lpm.get("source", "—")
+                _siv  = _lpm.get("iv")
+                _sdelta = _lpm.get("delta")
+
+                # Status header
+                card(
+                    f"<div style='background:#0a1525;border:2px solid {_sc};"
+                    f"border-radius:10px;padding:14px 18px;'>"
+                    f"<div style='display:flex;justify-content:space-between;"
+                    f"align-items:center;margin-bottom:10px;'>"
+                    f"<span style='font-size:18px;font-weight:900;color:{_sc};'>"
+                    f"{_lpm['action']}</span>"
+                    f"<span style='color:#4A7FA5;font-size:10px;'>via {_src}</span></div>"
+                    + (
+                        f"<div style='display:grid;grid-template-columns:repeat(4,1fr);"
+                        f"gap:8px;font-size:12px;margin-bottom:10px;'>"
+                        f"<div><div style='color:#4A7FA5;font-size:10px;'>Current Premium</div>"
+                        f"<div style='color:{_sc};font-weight:900;font-size:16px;'>"
+                        f"${_smid:.2f}</div></div>"
+                        f"<div><div style='color:#4A7FA5;font-size:10px;'>Entry Was</div>"
+                        f"<div style='color:#fff;font-weight:700;'>${_lpm['entry']:.2f}</div></div>"
+                        f"<div><div style='color:#4A7FA5;font-size:10px;'>P&L</div>"
+                        f"<div style='color:{_sc};font-weight:700;'>"
+                        f"{f'+{_spnl:.1f}%' if _spnl and _spnl >= 0 else f'{_spnl:.1f}%' if _spnl else '—'}"
+                        f"</div></div>"
+                        f"<div><div style='color:#4A7FA5;font-size:10px;'>IV Now</div>"
+                        f"<div style='color:#C9D6E3;font-weight:700;'>"
+                        f"{f'{_siv:.1f}%' if _siv else '—'}</div></div>"
+                        f"</div>"
+                        if _smid else ""
+                    )
+                    + f"<div style='color:#C9D6E3;font-size:12px;line-height:1.6;'>"
+                    f"{_lpm['message']}</div>"
+                    + (
+                        f"<div style='margin-top:8px;display:grid;grid-template-columns:repeat(3,1fr);"
+                        f"gap:6px;font-size:11px;color:#4A7FA5;'>"
+                        f"<div>T1 target: <b style='color:#FFB340;'>${_lpm['t1_target']:.2f}</b></div>"
+                        + (f"<div>T2 target: <b style='color:#1D9E75;'>${_lpm['t2_target']:.2f}</b></div>"
+                           if _lpm.get("t2_target") else "<div></div>")
+                        + f"<div>Stop: <b style='color:#FF4D6A;'>${_lpm['stop']:.2f}</b></div>"
+                        f"</div>"
+                        if _smid else ""
+                    )
+                    + "</div>"
+                )
+                st.caption("Refresh every 15–30 min during market hours to get updated signals. "
+                           "Market data via Alpaca IEX (15-min delay on free plan) / yfinance fallback.")
+
         # ── 📉 Options Chain Snapshot (raw data) ─────────────────────────
         with st.expander("📉 Options Chain Snapshot"):
             with st.spinner("Loading options…"):

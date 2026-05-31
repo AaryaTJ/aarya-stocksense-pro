@@ -35,3 +35,6 @@ jobs:
           TWELVE_DATA_KEY:      ${{ secrets.TWELVE_DATA_KEY }}
           SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY:         ${{ secrets.SUPABASE_KEY }}
+          ALPACA_API_KEY:       ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_SECRET:        ${{ secrets.ALPACA_SECRET }}
+          ALPACA_BASE_URL:      https://paper-api.alpaca.markets/v2
