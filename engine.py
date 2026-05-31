@@ -55,16 +55,33 @@ def _td_key() -> str:
     return os.environ.get("TWELVE_DATA_KEY", "")
 
 
+def _td_symbol(ticker: str) -> str:
+    """Convert yfinance ticker format to Twelve Data symbol format."""
+    t = ticker.upper().strip()
+    if t.endswith(".NS"):
+        return t[:-3] + ":NSE"
+    if t.endswith(".BO"):
+        return t[:-3] + ":BSE"
+    if t.endswith(".L"):
+        return t[:-2] + ":LSE"
+    if t.endswith(".DE"):
+        return t[:-3] + ":XETRA"
+    if t.endswith(".TO"):
+        return t[:-3] + ":TSX"
+    if t.endswith(".T"):
+        return t[:-2] + ":TSE"
+    return t.replace("-USD", "").replace("^", "")
+
+
 def get_rsi(ticker: str) -> float | None:
-    """Fetch RSI 14 from Twelve Data (US stocks only). Returns None on any failure."""
+    """Fetch RSI 14 from Twelve Data. Returns None on any failure."""
     key = _td_key()
     if not key:
         return None
-    td_symbol = ticker.split(".")[0].replace("-USD", "").replace("^", "").upper()
     try:
         r = requests.get(
             "https://api.twelvedata.com/rsi",
-            params={"symbol": td_symbol, "interval": "1day",
+            params={"symbol": _td_symbol(ticker), "interval": "1day",
                     "time_period": 14, "outputsize": 1, "apikey": key},
             timeout=8,
         )
@@ -74,6 +91,50 @@ def get_rsi(ticker: str) -> float | None:
     except Exception:
         pass
     return None
+
+
+def get_quote_td(ticker: str) -> dict | None:
+    """
+    Fetch a near-real-time quote from Twelve Data.
+    Works for India NSE, US, UK, Europe, Japan, Canada.
+    Returns dict with: price, open, high, low, prev_close, change, change_pct,
+                       volume, name, exchange, currency, timestamp, source.
+    Returns None on failure or missing key.
+    """
+    key = _td_key()
+    if not key:
+        return None
+    sym = _td_symbol(ticker)
+    try:
+        r = requests.get(
+            "https://api.twelvedata.com/quote",
+            params={"symbol": sym, "apikey": key},
+            timeout=10,
+        )
+        data = r.json()
+        if data.get("status") == "error" or "code" in data:
+            return None
+        price = float(data.get("close") or data.get("price") or 0)
+        if price <= 0:
+            return None
+        return {
+            "price":      round(price, 4),
+            "open":       round(float(data.get("open",       0) or 0), 4),
+            "high":       round(float(data.get("high",       0) or 0), 4),
+            "low":        round(float(data.get("low",        0) or 0), 4),
+            "prev_close": round(float(data.get("previous_close", 0) or 0), 4),
+            "change":     round(float(data.get("change",     0) or 0), 4),
+            "change_pct": round(float(data.get("percent_change", 0) or 0), 2),
+            "volume":     int(float(data.get("volume", 0) or 0)),
+            "name":       data.get("name", ticker),
+            "exchange":   data.get("exchange", ""),
+            "currency":   data.get("currency", ""),
+            "timestamp":  data.get("datetime", ""),
+            "source":     "Twelve Data",
+            "symbol":     sym,
+        }
+    except Exception:
+        return None
 
 
 # ── Kraken public API for crypto (no key needed, global access) ───────

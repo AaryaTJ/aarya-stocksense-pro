@@ -1412,6 +1412,44 @@ def tab_checker(cfg, market):
              f"</div>")
         st.markdown(signal_card(r, cfg), unsafe_allow_html=True)
 
+    # ── 📡 Live Price (Twelve Data) ────────────────────────────────────
+    _lp_key = f"live_price_{ticker}"
+    _lp_col1, _lp_col2 = st.columns([2, 5])
+    with _lp_col1:
+        if st.button("📡 Get Live Price", key=f"lp_btn_{ticker}",
+                     help="Fetches near-real-time price from Twelve Data (much fresher than the chart above)"):
+            with st.spinner("Fetching live price…"):
+                _lq = eng.get_quote_td(ticker)
+                st.session_state[_lp_key] = _lq if _lq else "unavailable"
+    _lq = st.session_state.get(_lp_key)
+    if _lq and _lq != "unavailable":
+        _chg    = _lq["change_pct"]
+        _chgcol = "#00C48C" if _chg >= 0 else "#FF4D6A"
+        _chgsign = "+" if _chg >= 0 else ""
+        with _lp_col2:
+            card(
+                f"<div style='background:#0a1525;border:1px solid #1a2f4a;"
+                f"border-radius:8px;padding:10px 16px;display:flex;align-items:center;gap:20px;'>"
+                f"<div><div style='color:#4A7FA5;font-size:10px;'>LIVE PRICE</div>"
+                f"<div style='color:#fff;font-weight:900;font-size:20px;'>"
+                f"{cur}{_lq['price']:,.2f}</div></div>"
+                f"<div><div style='color:#4A7FA5;font-size:10px;'>Change</div>"
+                f"<div style='color:{_chgcol};font-weight:700;font-size:14px;'>"
+                f"{_chgsign}{_chg:.2f}%</div></div>"
+                f"<div><div style='color:#4A7FA5;font-size:10px;'>Day High</div>"
+                f"<div style='color:#C9D6E3;font-weight:600;'>{cur}{_lq['high']:,.2f}</div></div>"
+                f"<div><div style='color:#4A7FA5;font-size:10px;'>Day Low</div>"
+                f"<div style='color:#C9D6E3;font-weight:600;'>{cur}{_lq['low']:,.2f}</div></div>"
+                f"<div><div style='color:#4A7FA5;font-size:10px;'>Prev Close</div>"
+                f"<div style='color:#C9D6E3;font-weight:600;'>{cur}{_lq['prev_close']:,.2f}</div></div>"
+                f"<div style='margin-left:auto;color:#4A7FA5;font-size:10px;'>"
+                f"via {_lq['source']}<br>{_lq['timestamp']}</div>"
+                f"</div>"
+            )
+    elif _lq == "unavailable":
+        with _lp_col2:
+            st.caption("Live price unavailable — Twelve Data key missing or symbol not supported.")
+
     # Profit probability
     if "error" not in pp:
         st.markdown(f"---\n### 🎯 Profit Probability — {days} day(s)")
