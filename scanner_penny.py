@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 scanner_penny.py — proactive penny-stock momentum scanner.
 

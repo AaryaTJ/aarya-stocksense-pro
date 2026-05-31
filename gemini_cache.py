@@ -5,6 +5,7 @@ fallback so we don't burn the free 250-requests/day quota.
 Used by `notifier.get_gemini_*` functions. Falls back gracefully when the
 Supabase cache table is unavailable.
 """
+from __future__ import annotations
 
 import hashlib
 from datetime import datetime, timedelta

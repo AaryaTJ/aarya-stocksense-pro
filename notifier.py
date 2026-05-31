@@ -2,6 +2,7 @@
 Aarya StockSense Pro — notifier.py
 Gmail SMTP email alerts + Gemini AI briefings.
 """
+from __future__ import annotations
 
 import html as _html
 import json

@@ -3,6 +3,7 @@ Aarya StockSense Pro — engine.py
 Full strategy engine: indicators, Minervini, sweeps, RS, R/R,
 fundamentals, news, options, compounding, profit probability.
 """
+from __future__ import annotations
 
 import warnings
 warnings.filterwarnings("ignore")

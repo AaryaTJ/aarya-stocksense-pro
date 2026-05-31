@@ -2,6 +2,7 @@
 Aarya StockSense Pro — auth.py
 User authentication and persistent session management.
 """
+from __future__ import annotations
 
 import os
 import streamlit as st

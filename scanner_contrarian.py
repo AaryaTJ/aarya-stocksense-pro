@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 scanner_contrarian.py — mean-reversion / oversold-quality scanner.
 

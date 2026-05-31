@@ -17,6 +17,8 @@ Tables (see SETUP.md for the CREATE statements):
   model_state          — ensemble weights + rolling accuracy (used in Phase 3)
 """
 
+from __future__ import annotations   # allows str | None on Python 3.9
+
 import os
 from datetime import datetime, date, timedelta
 

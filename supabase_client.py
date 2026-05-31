@@ -3,6 +3,7 @@ Aarya StockSense Pro — supabase_client.py
 Cloud settings persistence via Supabase (free tier).
 Used automatically when running on Streamlit Cloud (no local aarya_config.json).
 """
+from __future__ import annotations
 
 import os
 
