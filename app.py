@@ -688,179 +688,180 @@ def tab_picks(cfg, market):
                 else:
                     st.error("Email failed — check Alert Settings.")
 
-    # Signal cards
-    for group, label in [(buy,"🟢 BUY TODAY"),(prep,"🟦 PREPARE TO BUY"),
-                          (watch,"🟡 WATCH"),(avoid,"🔴 DO NOT BUY")]:
-        if not group: continue
-        st.markdown(f"### {label}")
-        cols = st.columns(min(len(group), 2))
-        for i, r in enumerate(group):
-            with cols[i%2]:
-                try:
-                    st.markdown(signal_card(r, cfg), unsafe_allow_html=True)
-                    with st.expander(f"📋 {r['ticker']} — Full Breakdown"):
-                        # Fundamentals strip
-                        fd = c_fund(r["ticker"]) or {"error": True}
-                        if not fd.get("error"):
-                            fa,fb,fc,fd4 = st.columns(4)
-                            fa.metric("Revenue Growth",  fmt(fd.get("rev_growth"),suffix="%",decimals=1) if fd.get("rev_growth") is not None else "N/A")
-                            fb.metric("Earnings Growth", fmt(fd.get("earn_growth"),suffix="%",decimals=1) if fd.get("earn_growth") is not None else "N/A")
-                            fc.metric("Analyst Rating",  fd.get("rec","N/A"))
-                            fd4.metric("Inst. Holding",  fmt(fd.get("inst_pct"),suffix="%",decimals=1) if fd.get("inst_pct") is not None else "N/A")
-                            st.caption(f"Sector: {fd.get('sector','—')}  ·  P/E: {fd.get('pe','—')}  ·  PEG: {fd.get('peg','—')}  ·  Target: {cur}{fd.get('target','—')}")
-                        # News
-                        try:
-                            news = c_news(r["ticker"]) or []
-                        except Exception:
-                            news = []
-                        if news:
-                            st.markdown("**Latest News**")
-                            for n in news[:3]:
-                                card(f"<div style='font-size:12px;padding:3px 0;'>"
-                                     f"<span style='color:{n['col']};'>{n['sent']}</span>&nbsp;"
-                                     f"<a href='{n['link']}' target='_blank' style='color:#C9D6E3;'>{n['title']}</a>"
-                                     f"<span style='color:#1a2f4a;'> — {n['pub']}</span></div>")
-                        # Chart
-                        if r.get("_df") is not None:
+    # Signal cards — each group in a collapsible expander
+    _group_cfg = [
+        (buy,  "🟢 BUY TODAY",       True),   # open by default — most actionable
+        (prep, "🟦 PREPARE TO BUY",  True),   # open — worth seeing
+        (watch,"🟡 WATCH",           False),  # collapsed — informational
+        (avoid,"🔴 DO NOT BUY",      False),  # collapsed — least urgent
+    ]
+    for group, label, expanded in _group_cfg:
+        if not group:
+            continue
+        with st.expander(f"{label}  ({len(group)})", expanded=expanded):
+            cols = st.columns(min(len(group), 2))
+            for i, r in enumerate(group):
+                with cols[i%2]:
+                    try:
+                        st.markdown(signal_card(r, cfg), unsafe_allow_html=True)
+                        with st.expander(f"📋 {r['ticker']} — Full Breakdown"):
+                            fd = c_fund(r["ticker"]) or {"error": True}
+                            if not fd.get("error"):
+                                fa,fb,fc,fd4 = st.columns(4)
+                                fa.metric("Revenue Growth",  fmt(fd.get("rev_growth"),suffix="%",decimals=1) if fd.get("rev_growth") is not None else "N/A")
+                                fb.metric("Earnings Growth", fmt(fd.get("earn_growth"),suffix="%",decimals=1) if fd.get("earn_growth") is not None else "N/A")
+                                fc.metric("Analyst Rating",  fd.get("rec","N/A"))
+                                fd4.metric("Inst. Holding",  fmt(fd.get("inst_pct"),suffix="%",decimals=1) if fd.get("inst_pct") is not None else "N/A")
+                                st.caption(f"Sector: {fd.get('sector','—')}  ·  P/E: {fd.get('pe','—')}  ·  PEG: {fd.get('peg','—')}  ·  Target: {cur}{fd.get('target','—')}")
                             try:
-                                st.plotly_chart(candlestick(r["_df"], r, r["ticker"]),
-                                                use_container_width=True)
+                                news = c_news(r["ticker"]) or []
                             except Exception:
-                                st.caption("Chart unavailable.")
-                except Exception as _card_err:
-                    st.warning(f"{r.get('ticker','?')}: display error — {_card_err}")
+                                news = []
+                            if news:
+                                st.markdown("**Latest News**")
+                                for n in news[:3]:
+                                    card(f"<div style='font-size:12px;padding:3px 0;'>"
+                                         f"<span style='color:{n['col']};'>{n['sent']}</span>&nbsp;"
+                                         f"<a href='{n['link']}' target='_blank' style='color:#C9D6E3;'>{n['title']}</a>"
+                                         f"<span style='color:#1a2f4a;'> — {n['pub']}</span></div>")
+                            if r.get("_df") is not None:
+                                try:
+                                    st.plotly_chart(candlestick(r["_df"], r, r["ticker"]),
+                                                    use_container_width=True)
+                                except Exception:
+                                    st.caption("Chart unavailable.")
+                    except Exception as _card_err:
+                        st.warning(f"{r.get('ticker','?')}: display error — {_card_err}")
 
-    # ── 🔻 Contrarian / Oversold-Quality picks (mean-reversion track) ────
+    # ── 🔻 Contrarian / Oversold-Quality picks ────────────────────────
     st.markdown("---")
-    st.markdown("#### 🔻 Contrarian / Oversold-Quality Picks")
-    st.caption("Mean-reversion track: quality names beaten down to 52-week-range lows. "
-               "Different rules from the trend picks above.")
-    try:
-        with st.spinner("Scanning contrarian setups…"):
-            contrarian_picks = scanner_contrarian.scan_contrarian(
-                mc, {"_df": None}, cfg["portfolio"], cfg["risk_pct"])
-    except Exception as _ce:
-        st.caption(f"Contrarian scan unavailable: {_ce}")
-        contrarian_picks = []
-    if not contrarian_picks:
-        st.info("No contrarian setups in this market right now.")
-    else:
-        for p in contrarian_picks:
-            try:
-                rr = p.get("rr", {})
-                conf = None
+    with st.expander("🔻 Contrarian / Oversold-Quality Picks", expanded=False):
+        st.caption("Mean-reversion track: quality names beaten down to 52-week-range lows. "
+                   "Different rules from the trend picks above.")
+        try:
+            with st.spinner("Scanning contrarian setups…"):
+                contrarian_picks = scanner_contrarian.scan_contrarian(
+                    mc, {"_df": None}, cfg["portfolio"], cfg["risk_pct"])
+        except Exception as _ce:
+            st.caption(f"Contrarian scan unavailable: {_ce}")
+            contrarian_picks = []
+        if not contrarian_picks:
+            st.info("No contrarian setups in this market right now.")
+        else:
+            for p in contrarian_picks:
                 try:
-                    conf = ml_predictor.score_prediction(p)
-                except Exception:
-                    pass
-                conf_html = (f"<span style='color:#FFB340;font-size:11px;font-weight:700;'>"
-                             f"ML {conf:.0f}%</span>" if conf else "")
-                card(
-                    f"<div style='background:#0a1525;border:1px solid #4A7FA5;"
-                    f"border-radius:10px;padding:12px 18px;margin-bottom:10px;'>"
-                    f"<div style='display:flex;justify-content:space-between;align-items:center;'>"
-                    f"<span style='font-size:18px;font-weight:900;color:#fff;'>{p['ticker']}</span>"
-                    f"<span style='background:#4A7FA5;color:#050d15;font-size:10px;"
-                    f"font-weight:700;padding:3px 10px;border-radius:10px;'>{p['signal']}</span></div>"
-                    f"<div style='color:#C9D6E3;font-size:12px;margin-top:6px;'>{p.get('verdict','')[:200]}</div>"
-                    f"<div style='display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:8px;font-size:12px;'>"
-                    f"<div><div style='color:#4A7FA5;font-size:10px;'>Entry</div>"
-                    f"<div style='color:#fff;font-weight:700;'>{cur}{p['entry']}</div></div>"
-                    f"<div><div style='color:#4A7FA5;font-size:10px;'>Stop</div>"
-                    f"<div style='color:#FF4D6A;font-weight:700;'>{cur}{p['stop']}</div></div>"
-                    f"<div><div style='color:#4A7FA5;font-size:10px;'>T1</div>"
-                    f"<div style='color:#FFB340;font-weight:700;'>{cur}{rr.get('t1','—')}</div></div>"
-                    f"<div><div style='color:#4A7FA5;font-size:10px;'>Win</div>"
-                    f"<div style='color:#1D9E75;font-weight:700;'>{p.get('win_prob','?')}%</div></div>"
-                    f"</div>{conf_html}</div>")
-            except Exception as _ce2:
-                st.caption(f"display: {_ce2}")
+                    rr = p.get("rr", {})
+                    conf = None
+                    try:
+                        conf = ml_predictor.score_prediction(p)
+                    except Exception:
+                        pass
+                    conf_html = (f"<span style='color:#FFB340;font-size:11px;font-weight:700;'>"
+                                 f"ML {conf:.0f}%</span>" if conf else "")
+                    card(
+                        f"<div style='background:#0a1525;border:1px solid #4A7FA5;"
+                        f"border-radius:10px;padding:12px 18px;margin-bottom:10px;'>"
+                        f"<div style='display:flex;justify-content:space-between;align-items:center;'>"
+                        f"<span style='font-size:18px;font-weight:900;color:#fff;'>{p['ticker']}</span>"
+                        f"<span style='background:#4A7FA5;color:#050d15;font-size:10px;"
+                        f"font-weight:700;padding:3px 10px;border-radius:10px;'>{p['signal']}</span></div>"
+                        f"<div style='color:#C9D6E3;font-size:12px;margin-top:6px;'>{p.get('verdict','')[:200]}</div>"
+                        f"<div style='display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:8px;font-size:12px;'>"
+                        f"<div><div style='color:#4A7FA5;font-size:10px;'>Entry</div>"
+                        f"<div style='color:#fff;font-weight:700;'>{cur}{p['entry']}</div></div>"
+                        f"<div><div style='color:#4A7FA5;font-size:10px;'>Stop</div>"
+                        f"<div style='color:#FF4D6A;font-weight:700;'>{cur}{p['stop']}</div></div>"
+                        f"<div><div style='color:#4A7FA5;font-size:10px;'>T1</div>"
+                        f"<div style='color:#FFB340;font-weight:700;'>{cur}{rr.get('t1','—')}</div></div>"
+                        f"<div><div style='color:#4A7FA5;font-size:10px;'>Win</div>"
+                        f"<div style='color:#1D9E75;font-weight:700;'>{p.get('win_prob','?')}%</div></div>"
+                        f"</div>{conf_html}</div>")
+                except Exception as _ce2:
+                    st.caption(f"display: {_ce2}")
 
     # ── ⚡ Penny Momentum Scanner ─────────────────────────────────────────
-    # Only shown for US ($10 threshold) and India (₹300 threshold) markets.
     _penny_key = mc.get("key", "")
     if _penny_key in ("US", "IN"):
         st.markdown("---")
-        st.markdown("#### ⚡ Penny Momentum Scanner")
         _penny_thresh = "under $10" if _penny_key == "US" else "under ₹300"
-        st.caption(
-            f"Proactive momentum scanner for penny stocks ({_penny_thresh}). "
-            "Different from the spike alert above — surfaces ALL penny setups ranked by momentum, "
-            "not just those that spiked >29% today. High risk — size positions small."
-        )
-        try:
-            with st.spinner("Scanning penny momentum…"):
-                _penny_picks = scanner_penny.scan_penny(
-                    mc, {"_df": None}, cfg["portfolio"], cfg["risk_pct"])
-        except Exception as _pe:
-            st.caption(f"Penny scan unavailable: {_pe}")
-            _penny_picks = []
+        with st.expander(f"⚡ Penny Momentum Scanner ({_penny_thresh})", expanded=False):
+            st.caption(
+                "Surfaces penny stocks showing volume + momentum — different from the spike alert above. "
+                "High risk — size positions small."
+            )
+            try:
+                with st.spinner("Scanning penny momentum…"):
+                    _penny_picks = scanner_penny.scan_penny(
+                        mc, {"_df": None}, cfg["portfolio"], cfg["risk_pct"])
+            except Exception as _pe:
+                st.caption(f"Penny scan unavailable: {_pe}")
+                _penny_picks = []
 
-        if not _penny_picks:
-            st.info("No penny momentum setups in this market right now.")
-        else:
-            _penny_sig_col = {
-                "PENNY MOMENTUM BUY":   "#FFB340",
-                "PENNY MOMENTUM WATCH": "#4A7FA5",
-                "PENNY CAUTION":        "#FF7A50",
-            }
-            _penny_cols = st.columns(min(len(_penny_picks), 2))
-            for _pi, _pp in enumerate(_penny_picks[:10]):
-                with _penny_cols[_pi % 2]:
-                    try:
-                        _prr  = _pp.get("rr", {})
-                        _pcol = _penny_sig_col.get(_pp.get("signal", ""), "#FFB340")
-                        _pconf = None
+            if not _penny_picks:
+                st.info("No penny momentum setups in this market right now.")
+            else:
+                _penny_sig_col = {
+                    "PENNY MOMENTUM BUY":   "#FFB340",
+                    "PENNY MOMENTUM WATCH": "#4A7FA5",
+                    "PENNY CAUTION":        "#FF7A50",
+                }
+                _penny_cols = st.columns(min(len(_penny_picks), 2))
+                for _pi, _pp in enumerate(_penny_picks[:10]):
+                    with _penny_cols[_pi % 2]:
                         try:
-                            _pconf = ml_predictor.score_prediction(_pp)
-                        except Exception:
-                            pass
-                        _conf_html = (
-                            f"<span style='color:#1D9E75;font-size:11px;font-weight:700;'>"
-                            f"ML {_pconf:.0f}%</span>" if _pconf else ""
-                        )
-                        card(
-                            f"<div style='background:#0a1525;border:1px solid {_pcol};"
-                            f"border-radius:10px;padding:12px 18px;margin-bottom:10px;'>"
-                            f"<div style='display:flex;justify-content:space-between;align-items:center;'>"
-                            f"<span style='font-size:18px;font-weight:900;color:#fff;'>⚡ {_pp['ticker']}</span>"
-                            f"<span style='background:{_pcol};color:#050d15;font-size:10px;"
-                            f"font-weight:700;padding:3px 10px;border-radius:10px;'>{_pp['signal']}</span></div>"
-                            f"<div style='color:#C9D6E3;font-size:12px;margin-top:6px;'>"
-                            f"{_pp.get('verdict','')[:200]}</div>"
-                            f"<div style='display:grid;grid-template-columns:repeat(4,1fr);"
-                            f"gap:6px;margin-top:8px;font-size:12px;'>"
-                            f"<div><div style='color:#4A7FA5;font-size:10px;'>Price</div>"
-                            f"<div style='color:#fff;font-weight:700;'>{cur}{_pp['price']}</div></div>"
-                            f"<div><div style='color:#4A7FA5;font-size:10px;'>Vol</div>"
-                            f"<div style='color:#FFB340;font-weight:700;'>{_pp.get('vol_ratio',1):.1f}x</div></div>"
-                            f"<div><div style='color:#4A7FA5;font-size:10px;'>RSI</div>"
-                            f"<div style='color:#C9D6E3;font-weight:700;'>{_pp.get('rsi','—')}</div></div>"
-                            f"<div><div style='color:#4A7FA5;font-size:10px;'>Stop</div>"
-                            f"<div style='color:#FF4D6A;font-weight:700;'>{cur}{_pp.get('stop','—')}</div></div>"
-                            f"</div>"
-                            f"<div style='display:grid;grid-template-columns:repeat(3,1fr);"
-                            f"gap:6px;margin-top:6px;font-size:11px;'>"
-                            f"<div style='background:#121e30;border-radius:4px;padding:4px;text-align:center;'>"
-                            f"<div style='color:#4A7FA5;font-size:10px;'>T1 +25%</div>"
-                            f"<div style='color:#FFB340;font-weight:700;'>{cur}{_pp.get('t1_price', _prr.get('t1','—'))}</div></div>"
-                            f"<div style='background:#121e30;border-radius:4px;padding:4px;text-align:center;'>"
-                            f"<div style='color:#4A7FA5;font-size:10px;'>T2 +50%</div>"
-                            f"<div style='color:#1D9E75;font-weight:700;'>{cur}{_pp.get('t2_price', _prr.get('t2','—'))}</div></div>"
-                            f"<div style='background:#121e30;border-radius:4px;padding:4px;text-align:center;'>"
-                            f"<div style='color:#4A7FA5;font-size:10px;'>T3 +100%</div>"
-                            f"<div style='color:#4A7FA5;font-weight:700;'>{cur}{_prr.get('t3','—')}</div></div>"
-                            f"</div>"
-                            f"{_conf_html}</div>"
-                        )
-                    except Exception as _pe2:
-                        st.caption(f"Display error: {_pe2}")
+                            _prr  = _pp.get("rr", {})
+                            _pcol = _penny_sig_col.get(_pp.get("signal", ""), "#FFB340")
+                            _pconf = None
+                            try:
+                                _pconf = ml_predictor.score_prediction(_pp)
+                            except Exception:
+                                pass
+                            _conf_html = (
+                                f"<span style='color:#1D9E75;font-size:11px;font-weight:700;'>"
+                                f"ML {_pconf:.0f}%</span>" if _pconf else ""
+                            )
+                            card(
+                                f"<div style='background:#0a1525;border:1px solid {_pcol};"
+                                f"border-radius:10px;padding:12px 18px;margin-bottom:10px;'>"
+                                f"<div style='display:flex;justify-content:space-between;align-items:center;'>"
+                                f"<span style='font-size:18px;font-weight:900;color:#fff;'>⚡ {_pp['ticker']}</span>"
+                                f"<span style='background:{_pcol};color:#050d15;font-size:10px;"
+                                f"font-weight:700;padding:3px 10px;border-radius:10px;'>{_pp['signal']}</span></div>"
+                                f"<div style='color:#C9D6E3;font-size:12px;margin-top:6px;'>"
+                                f"{_pp.get('verdict','')[:200]}</div>"
+                                f"<div style='display:grid;grid-template-columns:repeat(4,1fr);"
+                                f"gap:6px;margin-top:8px;font-size:12px;'>"
+                                f"<div><div style='color:#4A7FA5;font-size:10px;'>Price</div>"
+                                f"<div style='color:#fff;font-weight:700;'>{cur}{_pp['price']}</div></div>"
+                                f"<div><div style='color:#4A7FA5;font-size:10px;'>Vol</div>"
+                                f"<div style='color:#FFB340;font-weight:700;'>{_pp.get('vol_ratio',1):.1f}x</div></div>"
+                                f"<div><div style='color:#4A7FA5;font-size:10px;'>RSI</div>"
+                                f"<div style='color:#C9D6E3;font-weight:700;'>{_pp.get('rsi','—')}</div></div>"
+                                f"<div><div style='color:#4A7FA5;font-size:10px;'>Stop</div>"
+                                f"<div style='color:#FF4D6A;font-weight:700;'>{cur}{_pp.get('stop','—')}</div></div>"
+                                f"</div>"
+                                f"<div style='display:grid;grid-template-columns:repeat(3,1fr);"
+                                f"gap:6px;margin-top:6px;font-size:11px;'>"
+                                f"<div style='background:#121e30;border-radius:4px;padding:4px;text-align:center;'>"
+                                f"<div style='color:#4A7FA5;font-size:10px;'>T1 +25%</div>"
+                                f"<div style='color:#FFB340;font-weight:700;'>{cur}{_pp.get('t1_price', _prr.get('t1','—'))}</div></div>"
+                                f"<div style='background:#121e30;border-radius:4px;padding:4px;text-align:center;'>"
+                                f"<div style='color:#4A7FA5;font-size:10px;'>T2 +50%</div>"
+                                f"<div style='color:#1D9E75;font-weight:700;'>{cur}{_pp.get('t2_price', _prr.get('t2','—'))}</div></div>"
+                                f"<div style='background:#121e30;border-radius:4px;padding:4px;text-align:center;'>"
+                                f"<div style='color:#4A7FA5;font-size:10px;'>T3 +100%</div>"
+                                f"<div style='color:#4A7FA5;font-weight:700;'>{cur}{_prr.get('t3','—')}</div></div>"
+                                f"</div>"
+                                f"{_conf_html}</div>"
+                            )
+                        except Exception as _pe2:
+                            st.caption(f"Display error: {_pe2}")
 
-        card("<div style='background:#2d1a0a;border:1px solid #FF7A50;border-radius:8px;"
-             "padding:8px 14px;margin-top:4px;'>"
-             "<span style='color:#FFB340;font-size:11px;'>⚠️ <b>Penny stocks are extremely volatile.</b> "
-             "Risk only what you can lose. Never bet more than 0.5–1% of portfolio per penny trade. "
-             "Data is 15-min delayed — verify live price before acting.</span></div>")
+            card("<div style='background:#2d1a0a;border:1px solid #FF7A50;border-radius:8px;"
+                 "padding:8px 14px;margin-top:4px;'>"
+                 "<span style='color:#FFB340;font-size:11px;'>⚠️ <b>Penny stocks are extremely volatile.</b> "
+                 "Risk only what you can lose. Never bet more than 0.5–1% of portfolio per penny trade. "
+                 "Data is 15-min delayed — verify live price before acting.</span></div>")
 
     # ── 🤖 Chatbot panel — "Ask Aarya about today's picks" ─────────────
     st.markdown("---")
@@ -1495,92 +1496,94 @@ def tab_checker(cfg, market):
 
     # Fundamentals + expandable description
     if not fd.get("error"):
-        st.markdown("---\n### 📋 Company Profile")
-        fa,fb,fc,fd4 = st.columns(4)
-        fa.metric("Revenue Growth",  fmt(fd.get("rev_growth"),suffix="%",decimals=1) if fd.get("rev_growth") is not None else "N/A")
-        fb.metric("Earnings Growth", fmt(fd.get("earn_growth"),suffix="%",decimals=1) if fd.get("earn_growth") is not None else "N/A")
-        fc.metric("Analyst Rating",  fd.get("rec","N/A"))
-        fd4.metric("Inst. Holding",  fmt(fd.get("inst_pct"),suffix="%",decimals=1) if fd.get("inst_pct") is not None else "N/A")
-        st.caption(f"Sector: {fd.get('sector','—')}  ·  Industry: {fd.get('industry','—')}  ·  "
-                   f"P/E: {fd.get('pe','—')}  ·  Forward P/E: {fd.get('fwd_pe','—')}  ·  "
-                   f"PEG: {fd.get('peg','—')}  ·  Analyst Target: {cur}{fd.get('target','—')} "
-                   f"({fd.get('analysts',0)} analysts)")
-        # Full company description — expandable
-        desc = fd.get("description", "")
-        if desc:
-            with st.expander("📖 Full Company Description", expanded=False):
-                st.markdown(f"<div style='color:#C9D6E3;font-size:13px;line-height:1.8;'>{desc}</div>",
+        st.markdown("---")
+        with st.expander("📋 Company Profile & Fundamentals", expanded=False):
+            fa,fb,fc,fd4 = st.columns(4)
+            fa.metric("Revenue Growth",  fmt(fd.get("rev_growth"),suffix="%",decimals=1) if fd.get("rev_growth") is not None else "N/A")
+            fb.metric("Earnings Growth", fmt(fd.get("earn_growth"),suffix="%",decimals=1) if fd.get("earn_growth") is not None else "N/A")
+            fc.metric("Analyst Rating",  fd.get("rec","N/A"))
+            fd4.metric("Inst. Holding",  fmt(fd.get("inst_pct"),suffix="%",decimals=1) if fd.get("inst_pct") is not None else "N/A")
+            st.caption(f"Sector: {fd.get('sector','—')}  ·  Industry: {fd.get('industry','—')}  ·  "
+                       f"P/E: {fd.get('pe','—')}  ·  Forward P/E: {fd.get('fwd_pe','—')}  ·  "
+                       f"PEG: {fd.get('peg','—')}  ·  Analyst Target: {cur}{fd.get('target','—')} "
+                       f"({fd.get('analysts',0)} analysts)")
+            desc = fd.get("description", "")
+            if desc:
+                st.markdown(f"<div style='color:#C9D6E3;font-size:13px;line-height:1.8;margin-top:8px;'>{desc}</div>",
                             unsafe_allow_html=True)
 
     # News — Alpha Vantage first, fallback to yfinance
-    st.markdown("---\n### 📰 News & Sentiment")
+    st.markdown("---")
     try:
         av_news = eng.fetch_news_av(ticker, mc.get("suffix", ""))
     except Exception:
         av_news = []
     display_news = av_news if av_news else (nws or [])
     news_source  = "Alpha Vantage" if av_news else "Yahoo Finance"
-    if display_news:
-        st.caption(f"Source: {news_source} · {len(display_news)} articles")
-        for n in display_news:
-            summary = n.get("summary", "")
-            score   = n.get("score")
-            score_txt = f" · score {score:+.3f}" if score is not None else ""
-            if summary:
-                with st.expander(f"{n['sent']}  {n['title'][:80]}{'…' if len(n['title'])>80 else ''}", expanded=False):
+    _news_label  = f"📰 News & Sentiment  ({len(display_news)} articles)" if display_news else "📰 News & Sentiment"
+    with st.expander(_news_label, expanded=False):
+        if display_news:
+            st.caption(f"Source: {news_source}")
+            for n in display_news:
+                summary = n.get("summary", "")
+                score   = n.get("score")
+                score_txt = f" · score {score:+.3f}" if score is not None else ""
+                if summary:
+                    with st.expander(f"{n['sent']}  {n['title'][:80]}{'…' if len(n['title'])>80 else ''}", expanded=False):
+                        card(f"<div style='background:#0a1525;border-left:3px solid {n['col']};"
+                             f"border-radius:6px;padding:10px 14px;'>"
+                             f"<span style='color:{n['col']};font-size:11px;font-weight:700;'>{n['sent']}{score_txt}</span>"
+                             f"&nbsp;<a href='{n['link']}' target='_blank' style='color:#C9D6E3;font-size:13px;font-weight:600;'>{n['title']}</a>"
+                             f"<span style='color:#4A7FA5;font-size:10px;'> — {n['pub']}</span>"
+                             f"<div style='color:#C9D6E3;font-size:12px;line-height:1.6;margin-top:8px;'>{summary[:400]}</div>"
+                             f"</div>")
+                else:
                     card(f"<div style='background:#0a1525;border-left:3px solid {n['col']};"
-                         f"border-radius:6px;padding:10px 14px;'>"
-                         f"<span style='color:{n['col']};font-size:11px;font-weight:700;'>{n['sent']}{score_txt}</span>"
-                         f"&nbsp;<a href='{n['link']}' target='_blank' style='color:#C9D6E3;font-size:13px;font-weight:600;'>{n['title']}</a>"
-                         f"<span style='color:#4A7FA5;font-size:10px;'> — {n['pub']}</span>"
-                         f"<div style='color:#C9D6E3;font-size:12px;line-height:1.6;margin-top:8px;'>{summary[:400]}</div>"
-                         f"</div>")
-            else:
-                card(f"<div style='background:#0a1525;border-left:3px solid {n['col']};"
-                     f"border-radius:6px;padding:8px 14px;margin-bottom:6px;'>"
-                     f"<span style='color:{n['col']};font-size:11px;font-weight:700;'>{n['sent']}</span>"
-                     f"&nbsp;<a href='{n['link']}' target='_blank' style='color:#C9D6E3;font-size:13px;'>{n['title']}</a>"
-                     f"<span style='color:#4A7FA5;font-size:10px;'> — {n['pub']}</span></div>")
-    else:
-        st.info("No news found for this ticker.")
+                         f"border-radius:6px;padding:8px 14px;margin-bottom:6px;'>"
+                         f"<span style='color:{n['col']};font-size:11px;font-weight:700;'>{n['sent']}</span>"
+                         f"&nbsp;<a href='{n['link']}' target='_blank' style='color:#C9D6E3;font-size:13px;'>{n['title']}</a>"
+                         f"<span style='color:#4A7FA5;font-size:10px;'> — {n['pub']}</span></div>")
+        else:
+            st.info("No news found for this ticker.")
 
     # Gemini AI
-    st.markdown("---\n### 🤖 Gemini AI Briefing")
-    gcol1, gcol2 = st.columns([1, 1])
-    with gcol1:
-        if st.button("✨ Generate AI Briefing", type="primary", use_container_width=True):
-            with st.spinner("Asking Gemini…"):
+    st.markdown("---")
+    with st.expander("🤖 Gemini AI Briefing & Q&A", expanded=False):
+        gcol1, gcol2 = st.columns([1, 1])
+        with gcol1:
+            if st.button("✨ Generate AI Briefing", type="primary", use_container_width=True):
+                with st.spinner("Asking Gemini…"):
+                    try:
+                        briefing = notifier.get_gemini_briefing(ticker, r)
+                    except Exception as _ge:
+                        briefing = f"Gemini error: {_ge}"
+                st.session_state[f"briefing_{ticker}"] = briefing
+
+        briefing_text = st.session_state.get(f"briefing_{ticker}", "")
+        if briefing_text:
+            card(f"<div style='background:#0a1525;border:1px solid #1a2f4a;border-radius:8px;"
+                 f"padding:14px 18px;color:#C9D6E3;font-size:13px;line-height:1.7;'>"
+                 f"<div style='color:#9B59B6;font-size:11px;font-weight:700;margin-bottom:6px;'>"
+                 f"GEMINI AI · {ticker}</div>{briefing_text}</div>")
+
+        st.markdown("**💬 Ask Gemini about this stock:**")
+        q_key = f"q_{ticker}"
+        question = st.text_input("e.g. What are the main risks? What does this company do?",
+                                  key=q_key, label_visibility="collapsed",
+                                  placeholder="Ask anything about this stock…")
+        if st.button("Ask", key=f"ask_{ticker}") and question:
+            with st.spinner("Gemini is thinking…"):
                 try:
-                    briefing = notifier.get_gemini_briefing(ticker, r)
-                except Exception as _ge:
-                    briefing = f"Gemini error: {_ge}"
-            st.session_state[f"briefing_{ticker}"] = briefing
+                    answer = notifier.get_gemini_answer(ticker, question, r)
+                except Exception as _ge2:
+                    answer = f"Gemini error: {_ge2}"
+            st.session_state[f"ans_{ticker}"] = answer
 
-    briefing_text = st.session_state.get(f"briefing_{ticker}", "")
-    if briefing_text:
-        card(f"<div style='background:#0a1525;border:1px solid #1a2f4a;border-radius:8px;"
-             f"padding:14px 18px;color:#C9D6E3;font-size:13px;line-height:1.7;'>"
-             f"<div style='color:#9B59B6;font-size:11px;font-weight:700;margin-bottom:6px;'>"
-             f"GEMINI AI · {ticker}</div>{briefing_text}</div>")
-
-    st.markdown("**💬 Ask Gemini about this stock:**")
-    q_key = f"q_{ticker}"
-    question = st.text_input("e.g. What are the main risks? What does this company do?",
-                              key=q_key, label_visibility="collapsed",
-                              placeholder="Ask anything about this stock…")
-    if st.button("Ask", key=f"ask_{ticker}") and question:
-        with st.spinner("Gemini is thinking…"):
-            try:
-                answer = notifier.get_gemini_answer(ticker, question, r)
-            except Exception as _ge2:
-                answer = f"Gemini error: {_ge2}"
-        st.session_state[f"ans_{ticker}"] = answer
-
-    ans = st.session_state.get(f"ans_{ticker}", "")
-    if ans:
-        card(f"<div style='background:#0a1525;border-left:3px solid #9B59B6;"
-             f"border-radius:6px;padding:12px 16px;color:#C9D6E3;font-size:13px;line-height:1.7;'>"
-             f"<b style='color:#9B59B6;'>Gemini:</b> {ans}</div>")
+        ans = st.session_state.get(f"ans_{ticker}", "")
+        if ans:
+            card(f"<div style='background:#0a1525;border-left:3px solid #9B59B6;"
+                 f"border-radius:6px;padding:12px 16px;color:#C9D6E3;font-size:13px;line-height:1.7;'>"
+                 f"<b style='color:#9B59B6;'>Gemini:</b> {ans}</div>")
 
     # Options
     if not mc.get("is_crypto"):
