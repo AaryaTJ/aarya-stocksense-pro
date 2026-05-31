@@ -1120,3 +1120,51 @@ def tg_options_recommendation(rec: dict, chat_id: str = "") -> tuple[bool, str]:
         f"<i>{rec.get('verdict','')[:200]}</i>"
     )
     return send_telegram(msg, chat_id)
+
+
+# ── MARKET-WIDE SPIKE ALERT (any stock up 29%+ intraday) ──────────────
+
+def send_spike_alert_email(picks: list) -> tuple[bool, str]:
+    """Urgent email alert: market-wide spike(s) ≥ 29% on the day."""
+    if not picks:
+        return False, "no picks"
+    rows_html = "".join(
+        f"<div style='background:#0a1525;border-left:4px solid #FF4D6A;"
+        f"border:1px solid #1a2f4a;border-left:4px solid #FF4D6A;"
+        f"border-radius:8px;padding:12px 16px;margin-bottom:8px;'>"
+        f"<div style='display:flex;justify-content:space-between;align-items:center;'>"
+        f"<span style='font-size:18px;font-weight:900;color:#fff;'>{p['ticker']}</span>"
+        f"<span style='font-size:20px;font-weight:900;color:#FF4D6A;'>+{p['change_pct']:.1f}%</span>"
+        f"</div>"
+        f"<div style='margin-top:6px;font-size:12px;color:#C9D6E3;'>"
+        f"Price: <b>{p['currency']}{p['price']:.2f}</b>"
+        f"{'  |  Volume: <b>' + str(p.get('volume',0)//1000) + 'K</b>' if p.get('volume') else ''}"
+        f"  |  Market: {p.get('market_label','')}</div></div>"
+        for p in picks
+    )
+    body = (
+        f"<div style='font-size:13px;color:#C9D6E3;margin-bottom:14px;'>"
+        f"<b>{len(picks)}</b> stock{'s' if len(picks)>1 else ''} just hit <b style='color:#FF4D6A;'>+29% or more</b> today."
+        f"  These are unusual intraday moves — high volatility, verify before trading.</div>"
+        + rows_html
+        + "<p style='font-size:11px;color:#4A7FA5;margin-top:14px;'>"
+          "Spike alerts fire once per ticker per day. "
+          "Large intraday moves can reverse sharply — always check news first.</p>"
+    )
+    html = _wrap(f"Spike Alert — {len(picks)} stock(s) up 29%+", "#FF4D6A", body)
+    return send_alert(f"[Aarya] SPIKE: {', '.join(p['ticker'] for p in picks[:3])} up 29%+ today", html)
+
+
+def tg_spike_alert(picks: list, chat_id: str = "") -> tuple[bool, str]:
+    """Telegram message for intraday spike alert(s)."""
+    if not picks:
+        return False, "no picks"
+    lines = "\n".join(
+        f"<b>{p['ticker']}</b> +{p['change_pct']:.1f}% @ {p['currency']}{p['price']:.2f}"
+        for p in picks[:5]
+    )
+    msg = (
+        f"SPIKE ALERT\n{lines}\n\n"
+        f"<i>Up 29%+ today. High volatility — check news before trading.</i>"
+    )
+    return send_telegram(msg, chat_id)

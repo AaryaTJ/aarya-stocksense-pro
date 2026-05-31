@@ -358,6 +358,33 @@ check("_failure_reason_counts counts correctly", _fc.get("broke_50dma") == 2)
 check("_failure_reason_counts ignores hits",     "None" not in str(_fc))
 
 
+# ── 22. Market-wide spike alert surface ───────────────────────────────
+print("\n[22] Market-wide spike alert surface")
+check("fetch_market_gainers present", hasattr(eng, "fetch_market_gainers"))
+check("fetch_market_gainers callable", callable(eng.fetch_market_gainers))
+check("send_spike_alert_email present", hasattr(notifier, "send_spike_alert_email"))
+check("tg_spike_alert present", hasattr(notifier, "tg_spike_alert"))
+
+# send_spike_alert_email([]) -> False gracefully
+ok_sp, _ = notifier.send_spike_alert_email([])
+check("spike email returns False for empty list", ok_sp is False)
+
+# tg_spike_alert with no picks -> False
+ok_tgsp, _ = notifier.tg_spike_alert([])
+check("spike TG returns False for empty list", ok_tgsp is False)
+
+# send_spike_alert_email renders with a fake pick (mocked send_alert)
+_orig_alert3 = notifier.send_alert
+_cap4: dict = {}
+notifier.send_alert = lambda s, h, **k: (_cap4.update(subj=s, html=h) or (True, "dry"))
+_fake_spike = {"ticker": "SOFI", "price": 12.50, "change_pct": 34.1,
+               "volume": 50_000_000, "currency": "$", "market_label": "US Stocks"}
+ok_sp2, _ = notifier.send_spike_alert_email([_fake_spike])
+check("spike email renders with ticker", "SOFI" in _cap4.get("subj", ""))
+check("spike email renders change_pct", "34.1" in _cap4.get("html", ""))
+notifier.send_alert = _orig_alert3
+
+
 # ── Summary ────────────────────────────────────────────────────────────
 print(f"\n{'='*48}\nSMOKE TEST: {_passed} passed, {_failed} failed\n{'='*48}")
 sys.exit(1 if _failed else 0)

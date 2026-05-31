@@ -1153,6 +1153,54 @@ def check_weekly_trend(ticker: str) -> dict:
 #  VIX REGIME GATE
 # ══════════════════════════════════════════════════════════════════════
 
+_YF_SCREENER = (
+    "https://query2.finance.yahoo.com/v1/finance/screener/predefined/saved"
+    "?scrIds=day_gainers&count=100&formatted=false"
+)
+_YF_HEADERS = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                              "AppleWebKit/537.36 (KHTML, like Gecko) "
+                              "Chrome/124.0.0.0 Safari/537.36"}
+
+
+def fetch_market_gainers(threshold_pct: float = 29.0) -> list[dict]:
+    """Market-wide intraday gainers via Yahoo Finance screener.
+    Returns stocks with regularMarketChangePercent >= threshold_pct.
+    No API key needed. Results deduped by symbol."""
+    out: dict[str, dict] = {}   # symbol → pick, deduped
+
+    def _parse(url: str, currency: str, market_label: str):
+        try:
+            r = requests.get(url, headers=_YF_HEADERS, timeout=15)
+            if r.status_code != 200:
+                return
+            docs = ((r.json().get("finance") or {})
+                    .get("result") or [{}])[0].get("documents", [])
+            for d in docs:
+                chg = d.get("regularMarketChangePercent") or 0.0
+                sym = d.get("symbol", "")
+                if not sym or chg < threshold_pct:
+                    continue
+                if sym not in out:
+                    out[sym] = {
+                        "ticker":       sym,
+                        "price":        round(d.get("regularMarketPrice") or 0.0, 4),
+                        "change_pct":   round(chg, 1),
+                        "volume":       int(d.get("regularMarketVolume") or 0),
+                        "currency":     currency,
+                        "market_label": market_label,
+                    }
+        except Exception as e:
+            log.debug(f"fetch_market_gainers ({market_label}): {e}")
+
+    _parse(_YF_SCREENER, "$", "🇺🇸 US Stocks")
+    _parse(_YF_SCREENER + "&region=IN&lang=en-IN", "₹", "🇮🇳 India NSE")
+    result = sorted(out.values(), key=lambda x: x["change_pct"], reverse=True)
+    log.debug(f"fetch_market_gainers: {len(result)} stock(s) >= {threshold_pct}%")
+    return result
+
+
+# ══════════════════════════════════════════════════════════════════════
+
 def fetch_vix() -> dict:
     """Current VIX level — market fear gauge."""
     df = download("^VIX", period="5d")

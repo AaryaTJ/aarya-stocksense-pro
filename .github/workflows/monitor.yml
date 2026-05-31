@@ -2,22 +2,14 @@ name: Aarya Background Monitor
 
 on:
   schedule:
-    # ── Indian market hours (IST = UTC+5:30) ──────────────────────────
-    # 9:00 AM IST  — market open
-    - cron: '30 3 * * 1-5'
-    # 11:00 AM IST — mid-morning
-    - cron: '30 5 * * 1-5'
-    # 1:00 PM IST  — post-lunch
-    - cron: '30 7 * * 1-5'
-    # 3:00 PM IST  — near India close
-    - cron: '30 9 * * 1-5'
-    # ── US market hours (EDT = UTC-4, May–Oct) ────────────────────────
-    # 7:00 PM IST  — US market open (9:30 AM EDT)
-    - cron: '30 13 * * 1-5'
-    # 11:00 PM IST — US mid-session
-    - cron: '30 17 * * 1-5'
-    # ── Weekly performance report (Sunday 5:30 PM IST = 12:00 UTC) ─
-    - cron: '30 12 * * 0'
+    # ── India market hours: NSE 9:15 AM–3:30 PM IST = 3:45–10:00 UTC ─
+    # Hourly from 3:30 UTC to 10:00 UTC (every :30 past the hour)
+    - cron: '30 3-9 * * 1-5'
+    # ── US market hours: NYSE 9:30 AM–4 PM EDT = 13:30–20:00 UTC ─────
+    # Hourly from 13:30 UTC to 20:00 UTC (every :30 past the hour)
+    - cron: '30 13-19 * * 1-5'
+    # ── Weekly performance report (Sunday 5:30 PM IST = 12:00 UTC) ───
+    - cron: '0 12 * * 0'
   workflow_dispatch:   # manual run from GitHub Actions tab
 
 jobs:

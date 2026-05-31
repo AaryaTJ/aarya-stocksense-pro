@@ -355,6 +355,23 @@ def check_crypto_momentum(cfg: dict) -> list:
     return out[:5]
 
 
+# ── Market-Wide Spike Alert (any stock up ≥29% intraday) ──────────────
+
+def check_market_spike_alerts() -> list[dict]:
+    """
+    Poll Yahoo Finance day_gainers screener for ALL US + India stocks.
+    Returns every stock with regularMarketChangePercent >= 29%.
+    This is market-wide — not limited to the configured watchlists.
+    """
+    try:
+        spikes = eng.fetch_market_gainers(threshold_pct=29.0)
+        log.info(f"Market spike scan: {len(spikes)} stock(s) up 29%+ today")
+        return spikes
+    except Exception as e:
+        log.error(f"Market spike scan failed: {e}")
+        return []
+
+
 # ── High-Momentum Breakout scan ────────────────────────────────────────
 
 def check_momentum_breakouts(cfg: dict) -> list:
@@ -645,6 +662,33 @@ def run():
                 mldb.log_prediction(p)
             except Exception:
                 pass
+
+    # ── Step 2d: Market-wide spike alerts (any stock ≥29% intraday) ───
+    log.info("Step 2d: Market-wide spike scan (any stock up 29%+ today)…")
+    try:
+        mkt_spikes = check_market_spike_alerts()
+    except Exception as e:
+        log.error(f"Market spike scan error: {e}")
+        mkt_spikes = []
+
+    for sp in mkt_spikes:
+        t = sp["ticker"]
+        dedup_key = f"spike:{t}:{today}"
+        try:
+            ok, msg = _dedup_send(
+                "email_spike", t, dedup_key,
+                lambda s=sp: notifier.send_spike_alert_email([s]))
+            log.info(f"Spike email {t} +{sp['change_pct']:.1f}%: {'OK' if ok else 'FAIL ' + msg}")
+        except Exception as e:
+            log.error(f"Spike email error ({t}): {e}")
+        for cid in tg_chat_ids:
+            try:
+                ok, _ = _dedup_send(
+                    "tg_spike", t, f"tg:spike:{cid}:{t}:{today}",
+                    lambda s=sp: notifier.tg_spike_alert([s], cid))
+                log.info(f"Spike TG {t} -> {cid}: {'OK' if ok else 'skip'}")
+            except Exception as e:
+                log.error(f"Spike TG error ({t}/{cid}): {e}")
 
     # ── Momentum breakout alerts (one per ticker, deduped per day) ────
     for r in momentum:
