@@ -453,7 +453,7 @@ def render_pick_chart(ticker: str, pred_date_str: str,
         title=dict(text=f"{ticker} — 40d after pick", font=dict(color="#fff", size=12)),
         height=280,
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key=f"drill_chart_{ticker}_{pred_date_str}")
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -727,7 +727,8 @@ def tab_picks(cfg, market):
                             if r.get("_df") is not None:
                                 try:
                                     st.plotly_chart(candlestick(r["_df"], r, r["ticker"]),
-                                                    use_container_width=True)
+                                                    use_container_width=True,
+                                                    key=f"picks_chart_{r['ticker']}")
                                 except Exception:
                                     st.caption("Chart unavailable.")
                     except Exception as _card_err:
@@ -1159,7 +1160,7 @@ def tab_funds(cfg, market):
                            yaxis=dict(title=f"Value ({cur})",gridcolor="#1a2f4a",side="right"),
                            legend=dict(bgcolor="#080F1C",bordercolor="#1a2f4a"),
                            margin=dict(l=8,r=56,t=24,b=24))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key="sip_growth_chart")
         st.caption("🟢 Nominal growth · 🔵 Real purchasing power (after inflation) · 🟠 Total cash you put in. "
                    "The gap between green and orange is your actual profit. Plan targets using the blue (real) line.")
 
@@ -1335,7 +1336,7 @@ def tab_funds(cfg, market):
             margin=dict(l=8, r=56, t=24, b=24),
             barmode="overlay",
         )
-        st.plotly_chart(fig2, use_container_width=True)
+        st.plotly_chart(fig2, use_container_width=True, key="swp_drawdown_chart")
         st.caption(
             "🟢 Bars = remaining corpus each year · 🟠 Line = total cumulative withdrawals. "
             "When the bars reach zero, the corpus is exhausted. "
@@ -1985,9 +1986,11 @@ If the premium rises to $4.00, selling that contract earns **$4.00 × 100 = $400
                 renderLightweightCharts([{"chart": chart_opts, "series": series}], key=f"lwc_{ticker}")
             except Exception as e:
                 st.warning(f"TradingView chart error: {e}. Falling back to Plotly.")
-                st.plotly_chart(candlestick(r["_df"], r, ticker), use_container_width=True)
+                st.plotly_chart(candlestick(r["_df"], r, ticker), use_container_width=True,
+                                key=f"checker_chart_tv_fallback_{ticker}")
         else:
-            st.plotly_chart(candlestick(r["_df"], r, ticker), use_container_width=True)
+            st.plotly_chart(candlestick(r["_df"], r, ticker), use_container_width=True,
+                            key=f"checker_chart_{ticker}")
 
 
 # ══════════════════════════════════════════════════════════════════════
