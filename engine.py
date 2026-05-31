@@ -999,8 +999,8 @@ def recommend_option(ticker: str, stock_signal: dict, portfolio: float,
     t1_price = stock_signal.get("t1_price") or stock_signal.get("rr", {}).get("t1")
     cur_price = stock_signal.get("price") or stock_signal.get("entry")
 
-    if win_prob < 60:
-        return {"skip_reason": f"win_prob {win_prob}% < 60 — insufficient edge for options"}
+    if win_prob < 55:
+        return {"skip_reason": f"win_prob {win_prob}% < 55 — insufficient edge for options"}
 
     # direction
     is_bearish = signal in ("SELL", "SELL TODAY", "DO NOT BUY")

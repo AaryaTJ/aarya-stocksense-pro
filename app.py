@@ -1635,6 +1635,10 @@ If the premium rises to $4.00, selling that contract earns **$4.00 × 100 = $400
         if not _orec or "skip_reason" in _orec:
             st.info(f"⚪ {(_orec or {}).get('skip_reason', 'Recommendation not available.')}")
         else:
+            _sig_now = (r or {}).get("signal", "")
+            if "WATCH" in _sig_now or "PREPARE" in _sig_now:
+                st.warning("⚠️ Signal is not yet a full BUY — treat this as a **preview setup**. "
+                           "Wait for the stock to confirm (price above key levels, volume surge) before entering.")
             _odir    = _orec["direction"]
             _ocol    = "#1D9E75" if _odir == "CALL" else "#FF4D6A"
             _iv_lbl  = _orec.get("iv_label", "NORMAL")
@@ -1659,16 +1663,16 @@ If the premium rises to $4.00, selling that contract earns **$4.00 × 100 = $400
                 f"<div><div style='color:#4A7FA5;font-size:10px;'>Contract</div>"
                 f"<div style='color:#fff;font-weight:700;'>{cur}{_orec['strike']:.2f} {_odir} "
                 f"{_orec['expiry']} ({_orec['dte']}DTE)</div></div>"
-                f"<div><div style='color:#4A7FA5;font-size:10px;'>Premium per contract</div>"
+                f"<div><div style='color:#4A7FA5;font-size:10px;'>Quoted premium (per share)</div>"
                 f"<div style='color:#FFB340;font-weight:700;font-size:14px;'>"
                 f"{cur}{_orec['premium_entry']:.2f}</div>"
-                f"<div style='color:#4A7FA5;font-size:10px;'>(price shown × 100 shares)</div></div>"
+                f"<div style='color:#4A7FA5;font-size:10px;'>market quote — NOT what you pay</div></div>"
                 f"<div><div style='color:#4A7FA5;font-size:10px;'>Contracts to buy</div>"
                 f"<div style='color:#FFB340;font-weight:700;'>{_orec['contracts']}</div></div>"
                 f"<div><div style='color:#4A7FA5;font-size:10px;'>Total you pay</div>"
                 f"<div style='color:#00C48C;font-weight:700;font-size:14px;'>{cur}{_total_cost:,.0f}</div>"
-                f"<div style='color:#4A7FA5;font-size:10px;'>{_orec['contracts']} × "
-                f"{cur}{_orec['premium_entry']:.2f} × 100</div></div>"
+                f"<div style='color:#4A7FA5;font-size:10px;'>{_orec['contracts']} contract(s) × "
+                f"{cur}{_orec['premium_entry']:.2f} × 100 shares</div></div>"
                 f"</div>"
                 f"<div style='background:#121e30;border-radius:6px;padding:8px 12px;font-size:11px;"
                 f"color:#C9D6E3;margin-bottom:8px;'>"
