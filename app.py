@@ -1071,16 +1071,52 @@ def tab_funds(cfg, market):
                 st.info("Not in catalogue. Enter ticker manually in the Simulator tab.")
 
     with t_sim:
-        name = st.session_state.get("mf_name","Custom Fund / ETF")
+        # ── Fund picker ────────────────────────────────────────────────
+        _region_pref = "India" if cur == "₹" else ("US" if cur == "$" else "Global")
+        _cat_opts = ["— Enter manually —"] + [
+            f"{f[0]}  |  {f[1]}  |  Est. {f[4]}% p.a.  ({f[5]})"
+            for f in sorted(FUND_CATALOGUE,
+                            key=lambda x: (x[5] != _region_pref, x[5], x[1]))
+        ]
+        _sel = st.selectbox("📂 Pick a fund (auto-fills return rate)", _cat_opts,
+                            key="sim_fund_sel",
+                            help="Select any fund to pre-fill the CAGR. Your region's funds appear first.")
+        if _sel and _sel != "— Enter manually —":
+            _sym = _sel.split("|")[0].strip()
+            _picked = next((f for f in FUND_CATALOGUE if f[0] == _sym), None)
+            if _picked:
+                st.session_state["mf_name"] = _picked[1]
+                st.session_state["mf_cagr"] = _picked[4]
+
+        name   = st.session_state.get("mf_name", "Custom Fund / ETF")
         preset = float(st.session_state.get("mf_cagr", 12.0))
-        st.markdown(f"**Simulating:** {name}")
+        st.caption(f"**Simulating:** {name}  ·  Est. CAGR pre-filled — adjust if needed.")
         c1,c2,c3,c4 = st.columns(4)
-        with c1: lump = st.number_input(f"Lump Sum ({cur})", 0.0, value=1000.0, step=100.0, format="%.0f")
-        with c2: sip  = st.number_input(f"Monthly SIP ({cur})", 0.0, value=100.0, step=10.0, format="%.0f")
-        with c3: cagr = st.slider("CAGR %", 4.0, 30.0, preset, 0.5)
+        _lump_default  = 10_000.0 if cur == "₹" else 1_000.0
+        _sip_default   = 1_000.0  if cur == "₹" else 100.0
+        _lump_step     = 1_000.0  if cur == "₹" else 100.0
+        _sip_step      = 500.0    if cur == "₹" else 10.0
+        with c1: lump = st.number_input(f"Lump Sum ({cur})", 0.0, value=_lump_default, step=_lump_step, format="%.0f")
+        with c2: sip  = st.number_input(f"Monthly SIP ({cur})", 0.0, value=_sip_default, step=_sip_step, format="%.0f")
+        with c3: cagr = st.slider("CAGR %", 4.0, 30.0, min(preset, 30.0), 0.5)
         with c4: infl = st.slider("Inflation %", 0.0, 12.0, 5.0, 0.5)
 
         sim = eng.compound(lump, sip, cagr, infl, 30)
+
+        # ── Quick-look cards: 5 / 10 / 20 / 30 year highlights ────────
+        _milestones = {r["year"]: r for r in sim["milestones"]}
+        _hl_cols = st.columns(4)
+        for _i, _yr in enumerate([5, 10, 20, 30]):
+            _m = _milestones.get(_yr, {})
+            _nom = _m.get("nominal", 0)
+            _inv = _m.get("invested", 0)
+            _gain = ((_nom - _inv) / _inv * 100) if _inv > 0 else 0
+            with _hl_cols[_i]:
+                st.metric(
+                    f"{_yr}-Year Value",
+                    f"{cur}{_nom:,.0f}",
+                    f"+{_gain:.0f}% gain on {cur}{_inv:,.0f} invested"
+                )
 
         # Milestone table
         df_m = pd.DataFrame(sim["milestones"])
@@ -1088,7 +1124,7 @@ def tab_funds(cfg, market):
         for col in ["Nominal","Real (Infl-Adj.)","Invested"]:
             df_m[col] = df_m[col].apply(lambda x: f"{cur}{x:,.0f}")
         df_m["Gain %"] = df_m["Gain %"].apply(lambda x: f"+{x:.1f}%")
-        st.markdown("##### Wealth Milestones")
+        st.markdown("##### Full 30-Year Breakdown")
         st.dataframe(df_m, use_container_width=True, hide_index=True)
 
         # Chart
@@ -1115,22 +1151,34 @@ def tab_funds(cfg, market):
 
     with t_swp:
         st.markdown("### 💸 Systematic Withdrawal Plan (SWP) Calculator")
-        # Pre-fill fund name and CAGR from Fund Catalogue if a fund was loaded
-        _swp_fund_name = st.session_state.get("mf_name", "")
+        st.caption(
+            "SWP = withdraw a fixed amount every month from your corpus while the remaining balance keeps growing. "
+            "Used by retirees and anyone wanting regular passive income from investments."
+        )
+
+        # ── Fund picker ────────────────────────────────────────────────
+        _swp_region = "India" if cur == "₹" else ("US" if cur == "$" else "Global")
+        _swp_opts = ["— Enter manually —"] + [
+            f"{f[0]}  |  {f[1]}  |  Est. {f[4]}% p.a.  ({f[5]})"
+            for f in sorted(FUND_CATALOGUE,
+                            key=lambda x: (x[5] != _swp_region, x[5], x[1]))
+        ]
+        _swp_sel = st.selectbox("📂 Pick a fund (auto-fills return rate)", _swp_opts,
+                                key="swp_fund_sel",
+                                help="Select any fund to pre-fill the expected return. Your region's funds appear first.")
+        if _swp_sel and _swp_sel != "— Enter manually —":
+            _swp_sym = _swp_sel.split("|")[0].strip()
+            _swp_picked = next((f for f in FUND_CATALOGUE if f[0] == _swp_sym), None)
+            if _swp_picked:
+                st.session_state["mf_name"] = _swp_picked[1]
+                st.session_state["mf_cagr"] = _swp_picked[4]
+
+        _swp_fund_name   = st.session_state.get("mf_name", "")
         _swp_cagr_preset = float(st.session_state.get("mf_cagr", 10.0))
         if _swp_fund_name:
-            st.caption(
-                f"Simulating with: **{_swp_fund_name}** (return pre-filled from Fund Catalogue). "
-                "SWP lets you withdraw a fixed amount every month while the remaining corpus keeps growing."
-            )
-        else:
-            st.caption(
-                "SWP lets you withdraw a fixed amount every month from your invested corpus while the "
-                "remaining balance keeps growing. Used by retirees and anyone who wants regular passive income. "
-                "Tip: load a fund from the Fund Catalogue tab to auto-fill the return rate."
-            )
+            st.caption(f"Return rate pre-filled from: **{_swp_fund_name}**")
 
-        # Sensible defaults per currency: ₹10L corpus / ₹10K/month for India; $100K / $500 for others
+        # Sensible defaults per currency
         _swp_corpus_default  = 1_000_000.0 if cur == "₹" else 100_000.0
         _swp_monthly_default = 10_000.0    if cur == "₹" else 500.0
 
@@ -1139,23 +1187,23 @@ def tab_funds(cfg, market):
             swp_corpus = st.number_input(
                 f"Starting Corpus ({cur})", min_value=0.0, value=_swp_corpus_default,
                 step=10_000.0 if cur == "₹" else 1_000.0, format="%.0f",
-                help="Total amount invested / saved that you start withdrawals from."
+                help="Total invested/saved amount you start withdrawals from."
             )
         with sw2:
             swp_monthly = st.number_input(
                 f"Monthly Withdrawal ({cur})", min_value=0.0, value=_swp_monthly_default,
                 step=500.0 if cur == "₹" else 50.0, format="%.0f",
-                help="How much you withdraw every month."
+                help="How much you take out every month."
             )
         with sw3:
             swp_cagr = st.slider(
                 "Expected Return %", 4.0, 20.0, min(_swp_cagr_preset, 20.0), 0.5,
-                help="Annual return your corpus earns. Pre-filled from Fund Catalogue if a fund was loaded."
+                help="Annual return your corpus earns while you're withdrawing."
             )
         with sw4:
             swp_years = st.slider(
                 "Plan Duration (years)", 1, 40, 20, 1,
-                help="How many years you plan to withdraw."
+                help="How many years you plan to keep withdrawing."
             )
 
         # ── SWP calculation ────────────────────────────────────────────
