@@ -1650,41 +1650,88 @@ If the premium rises to $4.00, selling that contract earns **$4.00 × 100 = $400
             _vega_str  = f"  Vega {_orec['vega']:.3f}" if _orec.get("vega") else ""
 
             # ── Contract summary card ───────────────────────────────────────
-            _total_cost = _orec['contracts'] * _orec['premium_entry'] * 100
+            _total_cost       = _orec['contracts'] * _orec['premium_entry'] * 100
+            _cost_per_1       = round(_orec['premium_entry'] * 100, 2)
+            _t1_total         = round(_orec['premium_t1'] * 100, 2)
+            _t2_total         = round(_orec['premium_t2'] * 100, 2) if _orec.get('premium_t2') else None
+            _stop_total       = round(_orec['premium_stop'] * 100, 2)
+            _hold_days_label  = f"{_orec.get('max_hold_days', _orec['dte'])} days max — exit by {_orec.get('exit_by_date', _orec['expiry'])}"
+
             card(
                 f"<div style='background:#0a1525;border:2px solid {_ocol};"
                 f"border-radius:10px;padding:14px 18px;margin-bottom:12px;'>"
-                f"<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;'>"
-                f"<span style='font-size:16px;font-weight:900;color:#fff;'>"
-                f"{ticker} — {_odir} Contract</span>"
+
+                # Title row
+                f"<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;'>"
+                f"<span style='font-size:15px;font-weight:900;color:#fff;'>"
+                f"{ticker} — {_odir} &nbsp;"
+                f"<span style='color:#4A7FA5;font-size:12px;font-weight:400;'>"
+                f"{cur}{_orec['strike']:.2f} strike · {_orec['expiry']} · {_orec['dte']} days left</span></span>"
                 f"<span style='background:{_ocol};color:#050d15;font-size:11px;"
                 f"font-weight:700;padding:3px 12px;border-radius:10px;'>{_odir}</span></div>"
-                f"<div style='display:grid;grid-template-columns:repeat(4,1fr);gap:8px;font-size:12px;margin-bottom:10px;'>"
-                f"<div><div style='color:#4A7FA5;font-size:10px;'>Contract</div>"
-                f"<div style='color:#fff;font-weight:700;'>{cur}{_orec['strike']:.2f} {_odir} "
-                f"{_orec['expiry']} ({_orec['dte']}DTE)</div></div>"
-                f"<div><div style='color:#4A7FA5;font-size:10px;'>Quoted premium (per share)</div>"
-                f"<div style='color:#FFB340;font-weight:700;font-size:14px;'>"
-                f"{cur}{_orec['premium_entry']:.2f}</div>"
-                f"<div style='color:#4A7FA5;font-size:10px;'>market quote — NOT what you pay</div></div>"
+
+                # ── ROW 1: Entry costs ──────────────────────────────────────
+                f"<div style='background:#060e1c;border-radius:8px;padding:10px 14px;margin-bottom:10px;'>"
+                f"<div style='color:#4A7FA5;font-size:10px;font-weight:700;letter-spacing:1px;"
+                f"margin-bottom:8px;'>WHAT YOU PAY TO ENTER</div>"
+                f"<div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:12px;'>"
+
                 f"<div><div style='color:#4A7FA5;font-size:10px;'>Contracts to buy</div>"
-                f"<div style='color:#FFB340;font-weight:700;'>{_orec['contracts']}</div></div>"
+                f"<div style='color:#FFB340;font-weight:700;font-size:18px;'>{_orec['contracts']}</div>"
+                f"<div style='color:#4A7FA5;font-size:10px;'>recommended quantity</div></div>"
+
+                f"<div><div style='color:#4A7FA5;font-size:10px;'>Cost per 1 contract</div>"
+                f"<div style='color:#FFB340;font-weight:700;font-size:18px;'>{cur}{_cost_per_1:,.0f}</div>"
+                f"<div style='color:#4A7FA5;font-size:10px;'>{cur}{_orec['premium_entry']:.2f} quote × 100 shares</div></div>"
+
                 f"<div><div style='color:#4A7FA5;font-size:10px;'>Total you pay</div>"
-                f"<div style='color:#00C48C;font-weight:700;font-size:14px;'>{cur}{_total_cost:,.0f}</div>"
-                f"<div style='color:#4A7FA5;font-size:10px;'>{_orec['contracts']} contract(s) × "
-                f"{cur}{_orec['premium_entry']:.2f} × 100 shares</div></div>"
+                f"<div style='color:#00C48C;font-weight:700;font-size:18px;'>{cur}{_total_cost:,.0f}</div>"
+                f"<div style='color:#4A7FA5;font-size:10px;'>{_orec['contracts']} contract(s) × {cur}{_cost_per_1:,.0f}</div></div>"
+
+                f"</div></div>"
+
+                # ── ROW 2: Exit targets ─────────────────────────────────────
+                f"<div style='background:#060e1c;border-radius:8px;padding:10px 14px;margin-bottom:10px;'>"
+                f"<div style='color:#4A7FA5;font-size:10px;font-weight:700;letter-spacing:1px;"
+                f"margin-bottom:8px;'>WHEN TO CLOSE (premium per contract = quote × 100)</div>"
+                f"<div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:12px;'>"
+
+                f"<div style='background:#1a1200;border-radius:6px;padding:8px;'>"
+                f"<div style='color:#FFB340;font-size:10px;font-weight:700;'>💰 SELL HALF — Target 1</div>"
+                f"<div style='color:#FFB340;font-weight:700;font-size:16px;'>{cur}{_t1_total:,.0f}</div>"
+                f"<div style='color:#4A7FA5;font-size:10px;'>per contract · +{_orec.get('pnl_pct_at_t1',0):.0f}% profit</div>"
+                f"<div style='color:#4A7FA5;font-size:10px;'>stock ~{cur}{_orec.get('t1_stock_price','—')}</div></div>"
+
+                + (
+                f"<div style='background:#0a1f0a;border-radius:6px;padding:8px;'>"
+                f"<div style='color:#00C48C;font-size:10px;font-weight:700;'>🎯 SELL REST — Target 2</div>"
+                f"<div style='color:#00C48C;font-weight:700;font-size:16px;'>{cur}{_t2_total:,.0f}</div>"
+                f"<div style='color:#4A7FA5;font-size:10px;'>per contract · +{_orec.get('pnl_pct_at_t2',0):.0f}% profit</div>"
+                f"<div style='color:#4A7FA5;font-size:10px;'>stock ~{cur}{_orec.get('t2_stock_price','—')}</div></div>"
+                if _t2_total else
+                f"<div style='background:#0a1f0a;border-radius:6px;padding:8px;'>"
+                f"<div style='color:#00C48C;font-size:10px;font-weight:700;'>🎯 SELL ALL — Target 1</div>"
+                f"<div style='color:#00C48C;font-weight:700;font-size:16px;'>{cur}{_t1_total:,.0f}</div>"
+                f"<div style='color:#4A7FA5;font-size:10px;'>per contract · +{_orec.get('pnl_pct_at_t1',0):.0f}% profit</div></div>"
+                ) +
+
+                f"<div style='background:#1f0a0a;border-radius:6px;padding:8px;'>"
+                f"<div style='color:#FF4D6A;font-size:10px;font-weight:700;'>🛑 STOP LOSS — EXIT ALL</div>"
+                f"<div style='color:#FF4D6A;font-weight:700;font-size:16px;'>{cur}{_stop_total:,.0f}</div>"
+                f"<div style='color:#4A7FA5;font-size:10px;'>per contract · -50% · exit immediately</div></div>"
+
+                f"</div></div>"
+
+                # ── ROW 3: Hold duration ────────────────────────────────────
+                f"<div style='background:#0d1020;border-radius:6px;padding:8px 14px;"
+                f"display:flex;justify-content:space-between;align-items:center;'>"
+                f"<span style='color:#4A7FA5;font-size:11px;'>⏱ <b style='color:#FFB340;'>Hold up to:</b> "
+                f"{_hold_days_label}</span>"
+                f"<span style='color:#4A7FA5;font-size:10px;'>{_delta_str}{_theta_str} · "
+                f"IV {_orec['iv']:.0f}% <span style='color:{_iv_col};'>({_iv_lbl})</span> · "
+                f"breakeven {cur}{_orec['breakeven_stock']:.2f}</span>"
                 f"</div>"
-                f"<div style='background:#121e30;border-radius:6px;padding:8px 12px;font-size:11px;"
-                f"color:#C9D6E3;margin-bottom:8px;'>"
-                f"{_delta_str}{_theta_str}{_vega_str} &nbsp;|&nbsp; "
-                f"IV: {_orec['iv']:.1f}% "
-                f"<span style='color:{_iv_col};font-weight:700;'>({_iv_lbl})</span>"
-                f"&nbsp;|&nbsp; Stock breakeven: {cur}{_orec['breakeven_stock']:.2f}"
-                f"{_earn_warn}</div>"
-                f"<div style='background:#0d1f0d;border-radius:6px;padding:6px 12px;font-size:11px;"
-                f"color:#aaa;margin-top:4px;'>"
-                f"ℹ️ <b>1 contract = 100 shares.</b> You pay the premium × 100 as total cost. "
-                f"Profit/loss also multiplied by 100 — a {cur}1 move in premium = {cur}100 per contract.</div>"
+
                 f"</div>"
             )
 
