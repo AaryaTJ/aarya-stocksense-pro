@@ -95,7 +95,7 @@ def analyze_penny(ticker: str, mc: dict, bm_df, portfolio: float,
     except Exception:
         vol_ratio = 1.0
 
-    if vol_ratio < 1.5:
+    if vol_ratio < 1.2:
         return None
 
     # --- RSI ---
@@ -141,6 +141,8 @@ def analyze_penny(ticker: str, mc: dict, bm_df, portfolio: float,
         signal = "PENNY CAUTION"
     elif vol_ratio >= 1.5:
         signal = "PENNY MOMENTUM WATCH"
+    elif vol_ratio >= 1.2:
+        signal = "PENNY MOMENTUM WATCH"   # lower-confidence accumulation
     else:
         signal = "PENNY CAUTION"
 
@@ -229,7 +231,7 @@ def analyze_penny(ticker: str, mc: dict, bm_df, portfolio: float,
 
 
 def scan_penny(mc: dict, regime: dict, portfolio: float,
-               risk_pct: float, max_tickers: int = 30) -> list[dict]:
+               risk_pct: float, max_tickers: int = 50) -> list[dict]:
     """Public entrypoint. Returns penny picks sorted by signal strength.
 
     Only runs for US and India markets; returns [] for all others.

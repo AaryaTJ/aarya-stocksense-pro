@@ -1062,11 +1062,11 @@ def tab_funds(cfg, market):
                 sel = st.selectbox("Select", [f"{f[0]} — {f[1]}" for f in matches])
                 sym = sel.split(" — ")[0]
                 fund = next(f for f in FUND_CATALOGUE if f[0]==sym)
-                if st.button("📥 Load into Simulator"):
+                if st.button("📥 Load into Simulator & SWP"):
                     st.session_state["mf_sym"]  = sym
                     st.session_state["mf_cagr"] = fund[4]
                     st.session_state["mf_name"] = fund[1]
-                    st.success(f"Loaded {fund[1]} — switch to Simulator tab.")
+                    st.success(f"Loaded {fund[1]} ({fund[4]}% CAGR) — switch to Simulator or SWP tab.")
             else:
                 st.info("Not in catalogue. Enter ticker manually in the Simulator tab.")
 
@@ -1115,28 +1115,42 @@ def tab_funds(cfg, market):
 
     with t_swp:
         st.markdown("### 💸 Systematic Withdrawal Plan (SWP) Calculator")
-        st.caption(
-            "SWP lets you withdraw a fixed amount every month from your invested corpus while the "
-            "remaining balance keeps growing. Used by retirees and anyone who wants regular passive income."
-        )
+        # Pre-fill fund name and CAGR from Fund Catalogue if a fund was loaded
+        _swp_fund_name = st.session_state.get("mf_name", "")
+        _swp_cagr_preset = float(st.session_state.get("mf_cagr", 10.0))
+        if _swp_fund_name:
+            st.caption(
+                f"Simulating with: **{_swp_fund_name}** (return pre-filled from Fund Catalogue). "
+                "SWP lets you withdraw a fixed amount every month while the remaining corpus keeps growing."
+            )
+        else:
+            st.caption(
+                "SWP lets you withdraw a fixed amount every month from your invested corpus while the "
+                "remaining balance keeps growing. Used by retirees and anyone who wants regular passive income. "
+                "Tip: load a fund from the Fund Catalogue tab to auto-fill the return rate."
+            )
+
+        # Sensible defaults per currency: ₹10L corpus / ₹10K/month for India; $100K / $500 for others
+        _swp_corpus_default  = 1_000_000.0 if cur == "₹" else 100_000.0
+        _swp_monthly_default = 10_000.0    if cur == "₹" else 500.0
 
         sw1, sw2, sw3, sw4 = st.columns(4)
         with sw1:
             swp_corpus = st.number_input(
-                f"Starting Corpus ({cur})", min_value=0.0, value=1_000_000.0,
-                step=10_000.0, format="%.0f",
+                f"Starting Corpus ({cur})", min_value=0.0, value=_swp_corpus_default,
+                step=10_000.0 if cur == "₹" else 1_000.0, format="%.0f",
                 help="Total amount invested / saved that you start withdrawals from."
             )
         with sw2:
             swp_monthly = st.number_input(
-                f"Monthly Withdrawal ({cur})", min_value=0.0, value=5_000.0,
-                step=500.0, format="%.0f",
+                f"Monthly Withdrawal ({cur})", min_value=0.0, value=_swp_monthly_default,
+                step=500.0 if cur == "₹" else 50.0, format="%.0f",
                 help="How much you withdraw every month."
             )
         with sw3:
             swp_cagr = st.slider(
-                "Expected Return %", 4.0, 20.0, 10.0, 0.5,
-                help="Annual return your corpus earns while withdrawals are made."
+                "Expected Return %", 4.0, 20.0, min(_swp_cagr_preset, 20.0), 0.5,
+                help="Annual return your corpus earns. Pre-filled from Fund Catalogue if a fund was loaded."
             )
         with sw4:
             swp_years = st.slider(
@@ -1459,6 +1473,41 @@ def tab_checker(cfg, market):
     if not mc.get("is_crypto"):
         st.markdown("---\n### 🎯 Options — Trade Recommendation & Chain")
         st.caption("Below: AI-calculated options trade recommendation (CALL or PUT) + full options chain. US stocks only.")
+
+        # ── 📖 Options 101 — what is an options contract? ─────────────────
+        with st.expander("📖 New to options? — Click here to understand how this works"):
+            st.markdown("""
+**What is an options contract?**
+
+An option gives you the **right** (but not obligation) to buy or sell a stock at a fixed price before a certain date.
+
+| Term | Meaning |
+|------|---------|
+| **CALL option** | You profit when the stock goes **UP** |
+| **PUT option** | You profit when the stock goes **DOWN** |
+| **Strike price** | The fixed price the contract is for |
+| **Expiry date** | Last day the contract is valid |
+| **Premium** | Price you pay *per share* to buy the contract |
+
+**The most important rule: 1 contract = 100 shares**
+
+So if the premium is $2.50, buying 1 contract costs you **$2.50 × 100 = $250 total**.
+If the premium rises to $4.00, selling that contract earns **$4.00 × 100 = $400** — a $150 profit.
+
+**How to actually buy/sell this option (step by step):**
+1. Open your broker app (Zerodha, Robinhood, IBKR, etc.)
+2. Search for the stock ticker (e.g. AAPL)
+3. Tap **Options Chain** or **Derivatives**
+4. Select the **expiry date** shown in the recommendation below
+5. Select **CALL** or **PUT** as recommended
+6. Find the row with the **strike price** shown below
+7. Tap **Buy** → enter number of contracts → confirm
+8. Watch the premium vs your T1/T2/Stop targets (shown below)
+9. When target hits → tap **Sell to Close** on the same contract
+
+**Risk reminder:** You can only lose what you paid (the premium). A $250 option can drop to $0 — never risk more than you can afford to lose on a single trade.
+""")
+
         # ── 🎯 Options Trade Recommendation ──────────────────────────────
         st.markdown("#### Options Trade Recommendation")
         if r:
@@ -1484,6 +1533,7 @@ def tab_checker(cfg, market):
             _vega_str  = f"  Vega {_orec['vega']:.3f}" if _orec.get("vega") else ""
 
             # ── Contract summary card ───────────────────────────────────────
+            _total_cost = _orec['contracts'] * _orec['premium_entry'] * 100
             card(
                 f"<div style='background:#0a1525;border:2px solid {_ocol};"
                 f"border-radius:10px;padding:14px 18px;margin-bottom:12px;'>"
@@ -1492,16 +1542,20 @@ def tab_checker(cfg, market):
                 f"{ticker} — {_odir} Contract</span>"
                 f"<span style='background:{_ocol};color:#050d15;font-size:11px;"
                 f"font-weight:700;padding:3px 12px;border-radius:10px;'>{_odir}</span></div>"
-                f"<div style='display:grid;grid-template-columns:repeat(3,1fr);gap:8px;font-size:12px;margin-bottom:10px;'>"
+                f"<div style='display:grid;grid-template-columns:repeat(4,1fr);gap:8px;font-size:12px;margin-bottom:10px;'>"
                 f"<div><div style='color:#4A7FA5;font-size:10px;'>Contract</div>"
                 f"<div style='color:#fff;font-weight:700;'>{cur}{_orec['strike']:.2f} {_odir} "
                 f"{_orec['expiry']} ({_orec['dte']}DTE)</div></div>"
-                f"<div><div style='color:#4A7FA5;font-size:10px;'>Entry Premium (pay this)</div>"
+                f"<div><div style='color:#4A7FA5;font-size:10px;'>Premium per contract</div>"
                 f"<div style='color:#FFB340;font-weight:700;font-size:14px;'>"
-                f"{cur}{_orec['premium_entry']:.2f} / contract</div></div>"
-                f"<div><div style='color:#4A7FA5;font-size:10px;'>Contracts × Max Risk</div>"
-                f"<div style='color:#FFB340;font-weight:700;'>{_orec['contracts']} × "
-                f"= {cur}{_orec['max_risk_usd']:,.0f} total</div></div>"
+                f"{cur}{_orec['premium_entry']:.2f}</div>"
+                f"<div style='color:#4A7FA5;font-size:10px;'>(price shown × 100 shares)</div></div>"
+                f"<div><div style='color:#4A7FA5;font-size:10px;'>Contracts to buy</div>"
+                f"<div style='color:#FFB340;font-weight:700;'>{_orec['contracts']}</div></div>"
+                f"<div><div style='color:#4A7FA5;font-size:10px;'>Total you pay</div>"
+                f"<div style='color:#00C48C;font-weight:700;font-size:14px;'>{cur}{_total_cost:,.0f}</div>"
+                f"<div style='color:#4A7FA5;font-size:10px;'>{_orec['contracts']} × "
+                f"{cur}{_orec['premium_entry']:.2f} × 100</div></div>"
                 f"</div>"
                 f"<div style='background:#121e30;border-radius:6px;padding:8px 12px;font-size:11px;"
                 f"color:#C9D6E3;margin-bottom:8px;'>"
@@ -1510,6 +1564,10 @@ def tab_checker(cfg, market):
                 f"<span style='color:{_iv_col};font-weight:700;'>({_iv_lbl})</span>"
                 f"&nbsp;|&nbsp; Stock breakeven: {cur}{_orec['breakeven_stock']:.2f}"
                 f"{_earn_warn}</div>"
+                f"<div style='background:#0d1f0d;border-radius:6px;padding:6px 12px;font-size:11px;"
+                f"color:#aaa;margin-top:4px;'>"
+                f"ℹ️ <b>1 contract = 100 shares.</b> You pay the premium × 100 as total cost. "
+                f"Profit/loss also multiplied by 100 — a {cur}1 move in premium = {cur}100 per contract.</div>"
                 f"</div>"
             )
 
@@ -1648,9 +1706,10 @@ def tab_checker(cfg, market):
                         f"gap:8px;font-size:12px;margin-bottom:10px;'>"
                         f"<div><div style='color:#4A7FA5;font-size:10px;'>Current Premium</div>"
                         f"<div style='color:{_sc};font-weight:900;font-size:16px;'>"
-                        f"${_smid:.2f}</div></div>"
+                        f"{cur}{_smid:.2f}</div>"
+                        f"<div style='color:#4A7FA5;font-size:10px;'>(per share)</div></div>"
                         f"<div><div style='color:#4A7FA5;font-size:10px;'>Entry Was</div>"
-                        f"<div style='color:#fff;font-weight:700;'>${_lpm['entry']:.2f}</div></div>"
+                        f"<div style='color:#fff;font-weight:700;'>{cur}{_lpm['entry']:.2f}</div></div>"
                         f"<div><div style='color:#4A7FA5;font-size:10px;'>P&L</div>"
                         f"<div style='color:{_sc};font-weight:700;'>"
                         f"{f'+{_spnl:.1f}%' if _spnl and _spnl >= 0 else f'{_spnl:.1f}%' if _spnl else '—'}"
@@ -1666,17 +1725,20 @@ def tab_checker(cfg, market):
                     + (
                         f"<div style='margin-top:8px;display:grid;grid-template-columns:repeat(3,1fr);"
                         f"gap:6px;font-size:11px;color:#4A7FA5;'>"
-                        f"<div>T1 target: <b style='color:#FFB340;'>${_lpm['t1_target']:.2f}</b></div>"
-                        + (f"<div>T2 target: <b style='color:#1D9E75;'>${_lpm['t2_target']:.2f}</b></div>"
+                        f"<div>T1 target: <b style='color:#FFB340;'>{cur}{_lpm['t1_target']:.2f}</b></div>"
+                        + (f"<div>T2 target: <b style='color:#1D9E75;'>{cur}{_lpm['t2_target']:.2f}</b></div>"
                            if _lpm.get("t2_target") else "<div></div>")
-                        + f"<div>Stop: <b style='color:#FF4D6A;'>${_lpm['stop']:.2f}</b></div>"
+                        + f"<div>Stop: <b style='color:#FF4D6A;'>{cur}{_lpm['stop']:.2f}</b></div>"
                         f"</div>"
                         if _smid else ""
                     )
                     + "</div>"
                 )
-                st.caption("Refresh every 15–30 min during market hours to get updated signals. "
-                           "Market data via Alpaca IEX (15-min delay on free plan) / yfinance fallback.")
+                st.caption(
+                    "Refresh every 15–30 min during market hours to get updated signals. "
+                    "Market data via Alpaca IEX (15-min delay on free plan) / yfinance fallback. "
+                    "To exit: open your broker app → find this contract → tap **Sell to Close**."
+                )
 
         # ── 📉 Options Chain Snapshot (raw data) ─────────────────────────
         with st.expander("📉 Options Chain Snapshot"):

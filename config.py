@@ -49,8 +49,24 @@ MARKET_CONFIGS = {
         ],
         "default": ["NVDA","MSFT","AAPL","GOOGL","AMZN","META","TSLA","PLTR"],
         "penny_extras": [
-            "SOFI","PLUG","SOUN","BBAI","NU","GRAB","BITF","HUT","CLOV","NKLA",
-            "RIDE","WKHS","GOEV","MVIS","EXPR","GNUS","KOSS","NAKD","ZOME","BOXL",
+            # AI / tech small-caps (typically $2–$9)
+            "SOUN","BBAI","KULR","ARQT","TDUP","AEYE",
+            # Space / mobility
+            "JOBY","ACHR","LUNR","RDW","SPCE","RCAT",
+            # EV & clean energy
+            "CHPT","BLNK","EVGO","PLUG","CLNE","NKLA",
+            # Crypto miners (highly variable — scanner will filter by price)
+            "BITF","CIFR","HIVE","BTBT","HUT","RIOT",
+            # LiDAR / autonomy
+            "LAZR","MVIS","OUST","AEVA",
+            # Fintech / consumer
+            "OPEN","GRAB","CLOV","ATAI",
+            # Uranium / metals
+            "DNN","UEC","NXE","VALE",
+            # Biotech micro-caps
+            "IBRX","IMVT","NUVL","PRAX",
+            # Other active small-caps
+            "DM","WKHS","MMAT","GNUS","EXPR",
         ],
     },
 
@@ -77,9 +93,15 @@ MARKET_CONFIGS = {
             "ICICIBANK.NS","BAJFINANCE.NS","M&M.NS","WIPRO.NS",
         ],
         "penny_extras": [
-            "YESBANK.NS","IDEA.NS","IDFCFIRSTB.NS","IRFC.NS","NHPC.NS",
-            "TATAPOWER.NS","PNB.NS","BANKBARODA.NS","CANBK.NS","UNIONBANK.NS",
-            "RCOM.NS","JPASSOCIAT.NS","SUZLON.NS","GPIL.NS","SAIL.NS",
+            # PSU banks & NBFCs (₹20–₹200)
+            "YESBANK.NS","IDEA.NS","IDFCFIRSTB.NS","PNB.NS","BANKBARODA.NS",
+            "CANBK.NS","UNIONBANK.NS","IOB.NS","MAHABANK.NS","UCOBANK.NS",
+            # Power & infra (₹50–₹280)
+            "TATAPOWER.NS","NHPC.NS","IRFC.NS","RVNL.NS","IREDA.NS",
+            # Other active small-caps under ₹300
+            "SUZLON.NS","SAIL.NS","GPIL.NS","NMDC.NS","COALINDIA.NS",
+            "HUDCO.NS","RECLTD.NS","SJVN.NS","BPCL.NS","NALCO.NS",
+            "RCOM.NS","JPASSOCIAT.NS","HFCL.NS","GTPL.NS","OPTIEMUS.NS",
         ],
     },
 
