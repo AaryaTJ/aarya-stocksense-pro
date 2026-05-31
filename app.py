@@ -1071,26 +1071,39 @@ def tab_funds(cfg, market):
                 st.info("Not in catalogue. Enter ticker manually in the Simulator tab.")
 
     with t_sim:
-        # ── Fund picker ────────────────────────────────────────────────
+        # ── Fund search + picker ───────────────────────────────────────
         _region_pref = "India" if cur == "₹" else ("US" if cur == "$" else "Global")
-        _cat_opts = ["— Enter manually —"] + [
-            f"{f[0]}  |  {f[1]}  |  Est. {f[4]}% p.a.  ({f[5]})"
-            for f in sorted(FUND_CATALOGUE,
-                            key=lambda x: (x[5] != _region_pref, x[5], x[1]))
-        ]
-        _sel = st.selectbox("📂 Pick a fund (auto-fills return rate)", _cat_opts,
-                            key="sim_fund_sel",
-                            help="Select any fund to pre-fill the CAGR. Your region's funds appear first.")
-        if _sel and _sel != "— Enter manually —":
-            _sym = _sel.split("|")[0].strip()
-            _picked = next((f for f in FUND_CATALOGUE if f[0] == _sym), None)
-            if _picked:
-                st.session_state["mf_name"] = _picked[1]
-                st.session_state["mf_cagr"] = _picked[4]
+        _fsearch = st.text_input(
+            "🔍 Search fund by name or type",
+            placeholder="e.g. SBI, Vanguard, ELSS, Tech, Blue Chip…",
+            key="sim_fund_search",
+        )
+        _sorted_funds = sorted(FUND_CATALOGUE, key=lambda x: (x[5] != _region_pref, x[5], x[1]))
+        if _fsearch.strip():
+            _q = _fsearch.strip().lower()
+            _filtered_funds = [f for f in _sorted_funds
+                               if _q in f[1].lower() or _q in f[0].lower() or _q in f[2].lower() or _q in f[5].lower()]
+        else:
+            _filtered_funds = _sorted_funds
+
+        if _filtered_funds:
+            _cat_opts = ["— Select a fund —"] + [
+                f"{f[1]}  —  Est. {f[4]}% p.a.  [{f[2]}, {f[5]}]"
+                for f in _filtered_funds
+            ]
+            _sel = st.selectbox("📂 Select fund", _cat_opts, key="sim_fund_sel")
+            if _sel and _sel != "— Select a fund —":
+                _fname = _sel.split("  —  ")[0].strip()
+                _picked = next((f for f in _filtered_funds if f[1] == _fname), None)
+                if _picked:
+                    st.session_state["mf_name"] = _picked[1]
+                    st.session_state["mf_cagr"] = _picked[4]
+        else:
+            st.info(f"No funds found for '{_fsearch}'. Try 'SBI', 'Vanguard', 'ELSS', or 'Tech'.")
 
         name   = st.session_state.get("mf_name", "Custom Fund / ETF")
         preset = float(st.session_state.get("mf_cagr", 12.0))
-        st.caption(f"**Simulating:** {name}  ·  Est. CAGR pre-filled — adjust if needed.")
+        st.caption(f"**Simulating:** {name}  ·  Return rate pre-filled from selection — adjust if needed.")
         c1,c2,c3,c4 = st.columns(4)
         _lump_default  = 10_000.0 if cur == "₹" else 1_000.0
         _sip_default   = 1_000.0  if cur == "₹" else 100.0
@@ -1156,22 +1169,36 @@ def tab_funds(cfg, market):
             "Used by retirees and anyone wanting regular passive income from investments."
         )
 
-        # ── Fund picker ────────────────────────────────────────────────
+        # ── Fund search + picker ───────────────────────────────────────
         _swp_region = "India" if cur == "₹" else ("US" if cur == "$" else "Global")
-        _swp_opts = ["— Enter manually —"] + [
-            f"{f[0]}  |  {f[1]}  |  Est. {f[4]}% p.a.  ({f[5]})"
-            for f in sorted(FUND_CATALOGUE,
-                            key=lambda x: (x[5] != _swp_region, x[5], x[1]))
-        ]
-        _swp_sel = st.selectbox("📂 Pick a fund (auto-fills return rate)", _swp_opts,
-                                key="swp_fund_sel",
-                                help="Select any fund to pre-fill the expected return. Your region's funds appear first.")
-        if _swp_sel and _swp_sel != "— Enter manually —":
-            _swp_sym = _swp_sel.split("|")[0].strip()
-            _swp_picked = next((f for f in FUND_CATALOGUE if f[0] == _swp_sym), None)
-            if _swp_picked:
-                st.session_state["mf_name"] = _swp_picked[1]
-                st.session_state["mf_cagr"] = _swp_picked[4]
+        _swp_search = st.text_input(
+            "🔍 Search fund by name or type",
+            placeholder="e.g. SBI, Vanguard, ELSS, Tech, Blue Chip…",
+            key="swp_fund_search",
+        )
+        _swp_sorted = sorted(FUND_CATALOGUE, key=lambda x: (x[5] != _swp_region, x[5], x[1]))
+        if _swp_search.strip():
+            _swp_q = _swp_search.strip().lower()
+            _swp_filtered = [f for f in _swp_sorted
+                             if _swp_q in f[1].lower() or _swp_q in f[0].lower()
+                             or _swp_q in f[2].lower() or _swp_q in f[5].lower()]
+        else:
+            _swp_filtered = _swp_sorted
+
+        if _swp_filtered:
+            _swp_opts = ["— Select a fund —"] + [
+                f"{f[1]}  —  Est. {f[4]}% p.a.  [{f[2]}, {f[5]}]"
+                for f in _swp_filtered
+            ]
+            _swp_sel = st.selectbox("📂 Select fund", _swp_opts, key="swp_fund_sel")
+            if _swp_sel and _swp_sel != "— Select a fund —":
+                _swp_fname = _swp_sel.split("  —  ")[0].strip()
+                _swp_picked = next((f for f in _swp_filtered if f[1] == _swp_fname), None)
+                if _swp_picked:
+                    st.session_state["mf_name"] = _swp_picked[1]
+                    st.session_state["mf_cagr"] = _swp_picked[4]
+        else:
+            st.info(f"No funds found for '{_swp_search}'. Try 'SBI', 'Vanguard', 'ELSS', or 'Tech'.")
 
         _swp_fund_name   = st.session_state.get("mf_name", "")
         _swp_cagr_preset = float(st.session_state.get("mf_cagr", 10.0))
@@ -2174,6 +2201,40 @@ def tab_settings(cfg, market):
                 keys["gemini"] = {"api_key": gem_val.strip()}
                 notifier.save_keys(keys)
                 st.success("✅ Gemini key saved.")
+
+        with st.expander("📡 Alpaca API (Live Option Price Monitor)", expanded=False):
+            st.caption(
+                "Alpaca is used to fetch the **live option premium** in the Stock Checker → Options section "
+                "(the 'Check Current Premium Now' button). It's paper-trading only — no real money involved."
+            )
+            try:
+                import alpaca_client as _alp_s
+                _alp_ok = _alp_s.is_configured()
+            except Exception:
+                _alp_ok = False
+            if _alp_ok:
+                st.success("✅ Alpaca is already configured (keys loaded from Streamlit Secrets or config file). "
+                           "Live option monitoring is active.")
+                st.caption("On Streamlit Cloud: keys are set via Streamlit Secrets → no action needed here. "
+                           "If running locally, enter keys below to save to aarya_config.json.")
+            else:
+                st.warning("⚠️ Alpaca not configured — live premium monitoring will fall back to yfinance.")
+
+            _alp_cfg = keys.get("alpaca", {})
+            alp_key_val = st.text_input("Alpaca API Key",
+                                         value=_alp_cfg.get("api_key", ""),
+                                         type="password", placeholder="PKNFWZX…")
+            alp_sec_val = st.text_input("Alpaca Secret",
+                                         value=_alp_cfg.get("secret", ""),
+                                         type="password", placeholder="6RFKTm…")
+            if st.button("💾 Save Alpaca Keys"):
+                keys["alpaca"] = {
+                    "api_key": alp_key_val.strip(),
+                    "secret":  alp_sec_val.strip(),
+                    "base_url": "https://paper-api.alpaca.markets/v2",
+                }
+                notifier.save_keys(keys)
+                st.success("✅ Alpaca keys saved to local config.")
 
         st.markdown("---")
         st.markdown("### 📱 Telegram Notifications")
