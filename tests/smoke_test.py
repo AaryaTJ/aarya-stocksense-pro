@@ -300,6 +300,64 @@ ok_ot, _ = notifier.tg_options_recommendation({"skip_reason": "test"})
 check("options TG skip_reason returns False", ok_ot is False)
 
 
+# ── 19. New mldb helpers degrade gracefully (no creds) ────────────────
+print("\n[19] mldb Track Record helpers (no-creds graceful degradation)")
+check("get_recent_predictions returns list (no creds)",
+      isinstance(mldb.get_recent_predictions(days=7), list))
+check("get_prediction_by_id returns None (no creds)",
+      mldb.get_prediction_by_id(1) is None)
+check("get_calibration_buckets returns list (no creds)",
+      isinstance(mldb.get_calibration_buckets(), list))
+check("get_retroactive_hits returns list (no creds)",
+      isinstance(mldb.get_retroactive_hits(), list))
+check("get_user_note returns str (no creds)",
+      isinstance(mldb.get_user_note(1, "u"), str))
+check("upsert_user_note returns False (no creds)",
+      mldb.upsert_user_note(1, "u", "x") is False)
+check("get_user_notes_bulk returns dict (no creds)",
+      isinstance(mldb.get_user_notes_bulk([1, 2], "u"), dict))
+
+
+# ── 20. _classify_failure returns valid tag ────────────────────────────
+print("\n[20] _classify_failure auto-tagging")
+import pandas as _pd_smoke
+_VALID_TAGS = {"rsi_overheated_at_entry", "broke_50dma", "volume_dried_up", "general_drawdown"}
+
+# High RSI → rsi_overheated_at_entry
+_tag1 = ml_predictor._classify_failure({"rsi": 80}, _pd_smoke.DataFrame(), 100.0)
+check("classify_failure high RSI", _tag1 == "rsi_overheated_at_entry")
+
+# No data → general_drawdown (graceful)
+_tag2 = ml_predictor._classify_failure({}, _pd_smoke.DataFrame(), 100.0)
+check("classify_failure empty df -> general_drawdown", _tag2 == "general_drawdown")
+
+# Normal payload with valid DataFrame → one of the known tags
+_n = 20
+_fake_df = _pd_smoke.DataFrame({
+    "Close":  [100.0] * _n,
+    "Volume": [1_000_000] * _n,
+})
+_tag3 = ml_predictor._classify_failure({"rsi": 55}, _fake_df, 100.0)
+check("classify_failure returns valid tag", _tag3 in _VALID_TAGS, _tag3)
+
+# update_prediction_outcome signature accepts failure_reason kwarg
+import inspect as _insp
+_params = list(_insp.signature(mldb.update_prediction_outcome).parameters)
+check("update_prediction_outcome has failure_reason param", "failure_reason" in _params)
+
+
+# ── 21. weekly_report has _failure_reason_counts ──────────────────────
+print("\n[21] weekly_report failure-reason counts")
+check("_failure_reason_counts present", hasattr(weekly_report, "_failure_reason_counts"))
+_fc = weekly_report._failure_reason_counts([
+    {"hit": False, "failure_reason": "broke_50dma"},
+    {"hit": False, "failure_reason": "broke_50dma"},
+    {"hit": True,  "failure_reason": None},
+])
+check("_failure_reason_counts counts correctly", _fc.get("broke_50dma") == 2)
+check("_failure_reason_counts ignores hits",     "None" not in str(_fc))
+
+
 # ── Summary ────────────────────────────────────────────────────────────
 print(f"\n{'='*48}\nSMOKE TEST: {_passed} passed, {_failed} failed\n{'='*48}")
 sys.exit(1 if _failed else 0)

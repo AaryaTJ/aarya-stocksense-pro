@@ -360,9 +360,15 @@ def sidebar(cfg: dict):
         refresh = st.select_slider("🔄 Auto-refresh", [0,60,300,600,900],
                                     value=cfg.get("refresh",300),
                                     format_func=lambda x: "Off" if x==0 else f"{x//60}m")
+        tv_mode = st.toggle("📺 TV Mode", value=st.session_state.get("tv_mode", False),
+                             help="Big fonts, hides sidebar, 60s auto-refresh. "
+                                  "Cast via Chrome → right-click → Cast…")
+        st.session_state["tv_mode"] = tv_mode
         cfg.update({"portfolio": portfolio, "risk_pct": risk_pct, "refresh": refresh})
         _save(cfg)
-        if refresh > 0:
+        if tv_mode:
+            st_autorefresh(interval=60_000, key="tv_refresh")
+        elif refresh > 0:
             st_autorefresh(interval=refresh*1000, key="arf")
 
         # Regime badge
@@ -404,6 +410,50 @@ def sidebar(cfg: dict):
                 auth.logout()
 
     return cfg, market
+
+
+@st.cache_data(ttl=3600)
+def c_pick_chart(ticker: str, pred_date_str: str):
+    """Download ~40 calendar days from pred_date for the drill-down chart."""
+    try:
+        from datetime import date as _date, timedelta as _td
+        start = _date.fromisoformat(pred_date_str)
+        end   = start + _td(days=42)
+        df    = eng.download(ticker, start=start.isoformat(), end=end.isoformat())
+        return df
+    except Exception:
+        return None
+
+
+def render_pick_chart(ticker: str, pred_date_str: str,
+                      entry: float, stop: float, t1: float) -> None:
+    """Small price chart showing what happened after a pick was made."""
+    df = c_pick_chart(ticker, pred_date_str)
+    if df is None or len(df) < 2:
+        st.caption("Price data unavailable for this date range.")
+        return
+    cl = df["Close"].squeeze()
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=df.index, y=cl, mode="lines",
+                             line=dict(color="#4A7FA5", width=2), name="Close"))
+    for lvl, lbl, col in [(entry, "Entry", "#1D9E75"),
+                           (stop,  "Stop",  "#FF4D6A"),
+                           (t1,    "T1",    "#FFB340")]:
+        if lvl:
+            fig.add_hline(y=lvl, line=dict(color=col, dash="dot", width=1.2),
+                          annotation_text=lbl, annotation_position="right",
+                          annotation_font_color=col)
+    fig.update_layout(
+        paper_bgcolor="#0F1B2D", plot_bgcolor="#0F1B2D",
+        font=dict(color="#C9D6E3", size=10),
+        xaxis=dict(gridcolor="#1a2f4a", showgrid=True, rangeslider_visible=False),
+        yaxis=dict(gridcolor="#1a2f4a", showgrid=True, side="right"),
+        legend=dict(bgcolor="#080F1C", bordercolor="#1a2f4a", font_size=9),
+        margin=dict(l=8, r=64, t=24, b=8),
+        title=dict(text=f"{ticker} — 40d after pick", font=dict(color="#fff", size=12)),
+        height=280,
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1792,6 +1842,224 @@ def tab_settings(cfg, market):
 
 
 # ══════════════════════════════════════════════════════════════════════
+#  TAB 8 — TRACK RECORD
+# ══════════════════════════════════════════════════════════════════════
+def tab_track_record(cfg, market):
+    user    = st.session_state.get("_aarya_auth")
+    user_id = user["id"] if user else None
+
+    st.subheader("📊 Track Record — All Picks & Outcomes")
+    st.caption("Every pick the system has made, with live outcomes, calibration analysis and your personal notes.")
+
+    # ── Per-track summary cards ───────────────────────────────────────
+    try:
+        _summary_rows = mldb.get_recent_predictions(days=30)
+        if _summary_rows:
+            from ml.weekly_report import _per_track_stats
+            _ts = _per_track_stats([r for r in _summary_rows if r.get("status") == "evaluated"])
+            if _ts:
+                cols = st.columns(min(len(_ts), 4))
+                for i, ts in enumerate(_ts[:4]):
+                    rc = "#1D9E75" if ts["rate"] >= 0.5 else "#FF4D6A"
+                    with cols[i]:
+                        card(f"<div style='background:#0a1525;border:1px solid {rc}44;"
+                             f"border-radius:8px;padding:10px 12px;text-align:center;'>"
+                             f"<div style='color:#4A7FA5;font-size:10px;letter-spacing:.5px;text-transform:uppercase;'>"
+                             f"{ts['track']}</div>"
+                             f"<div style='color:{rc};font-size:22px;font-weight:900;margin:4px 0;'>"
+                             f"{ts['rate']*100:.0f}%</div>"
+                             f"<div style='color:#C9D6E3;font-size:11px;'>"
+                             f"{ts['hits']}/{ts['n']} hits{ts['warn']}</div></div>")
+    except Exception:
+        pass
+
+    st.markdown("<div style='margin:8px 0;'></div>", unsafe_allow_html=True)
+
+    # ── Retroactive hits banner ───────────────────────────────────────
+    try:
+        _hits = mldb.get_retroactive_hits(hours=24)
+        if _hits:
+            _hit_lines = "  ·  ".join(
+                f"<b>{h['ticker']}</b> +{(h.get('outcome_pct') or 0):.1f}%"
+                for h in _hits[:5])
+            card(f"<div style='background:#1D9E7518;border:1px solid #1D9E75;"
+                 f"border-radius:8px;padding:10px 16px;margin-bottom:10px;'>"
+                 f"<span style='color:#1D9E75;font-weight:700;'>🎉 Flipped to HIT in the last 24h: </span>"
+                 f"<span style='color:#C9D6E3;font-size:13px;'>{_hit_lines}</span></div>")
+    except Exception:
+        pass
+
+    # ── Filter row ────────────────────────────────────────────────────
+    fc1, fc2, fc3, fc4, fc5 = st.columns([2, 2, 2, 2, 1])
+    with fc1:
+        days_opt = st.selectbox("Date Range", ["7d", "30d", "90d", "All"],
+                                index=1, key="tr_days")
+    with fc2:
+        mkt_filter = st.selectbox("Market", ["All", "US", "IN", "CRYPTO", "UK", "EU", "CA", "JP"],
+                                  key="tr_mkt")
+    with fc3:
+        track_filter = st.selectbox("Track", ["All", "stock", "penny", "crypto", "options"],
+                                    key="tr_track")
+    with fc4:
+        sig_filter = st.selectbox("Signal", ["All", "BUY TODAY", "PREPARE TO BUY", "WATCH"],
+                                  key="tr_sig")
+    with fc5:
+        st.markdown("<div style='padding-top:24px'></div>", unsafe_allow_html=True)
+        export_btn = st.button("📥 CSV", use_container_width=True, key="tr_csv")
+
+    # ── Fetch + filter data ───────────────────────────────────────────
+    days_map = {"7d": 7, "30d": 30, "90d": 90, "All": 730}
+    days_int = days_map[days_opt]
+    with st.spinner("Loading picks…"):
+        rows = mldb.get_recent_predictions(
+            days=days_int,
+            market=None if mkt_filter == "All" else mkt_filter,
+            track=None  if track_filter == "All" else track_filter,
+            signal=None if sig_filter == "All" else sig_filter,
+        )
+
+    if not rows:
+        st.info("No picks found for the selected filters. The system logs picks automatically — check back once the monitor has run.")
+        return
+
+    # ── Bulk-load current user's notes ────────────────────────────────
+    pred_ids  = [r["id"] for r in rows]
+    notes_map = mldb.get_user_notes_bulk(pred_ids, user_id) if user_id else {}
+
+    # ── Build display table ───────────────────────────────────────────
+    def _status(row):
+        if row.get("status") == "evaluated":
+            return "🟢 HIT" if row.get("hit") else "🔴 MISSED"
+        return "⏳ PENDING"
+
+    def _days_held(row):
+        try:
+            from datetime import date as _d
+            return (  _d.today() - _d.fromisoformat(str(row["pred_date"])[:10])).days
+        except Exception:
+            return "—"
+
+    rows_display = []
+    for r in rows:
+        rows_display.append({
+            "Date":      str(r.get("pred_date", ""))[:10],
+            "Ticker":    r.get("ticker", ""),
+            "Market":    (r.get("market") or "")[:10],
+            "Signal":    r.get("signal", ""),
+            "Track":     mldb._derive_track(r),
+            "Entry":     r.get("entry") or r.get("price"),
+            "Stop":      r.get("stop"),
+            "T1":        r.get("t1"),
+            "Win%":      r.get("win_prob"),
+            "Status":    _status(r),
+            "Days":      _days_held(r),
+            "Return%":   round(r["outcome_pct"], 1) if r.get("outcome_pct") is not None else None,
+        })
+
+    df_display = pd.DataFrame(rows_display)
+    st.dataframe(df_display, use_container_width=True, hide_index=True)
+
+    # ── CSV export ────────────────────────────────────────────────────
+    if export_btn:
+        csv_bytes = df_display.to_csv(index=False).encode()
+        st.download_button("⬇️ Download CSV", csv_bytes, "track_record.csv",
+                           "text/csv", key="tr_dl")
+
+    st.markdown("---")
+
+    # ── Drill-down ────────────────────────────────────────────────────
+    st.markdown("#### 🔍 Drill-down")
+    ticker_opts = ["— select a pick —"] + [f"{r['Date']}  {r['Ticker']}" for r in rows_display]
+    sel = st.selectbox("Select pick to inspect", ticker_opts, key="tr_sel")
+
+    if sel and sel != "— select a pick —":
+        idx  = ticker_opts.index(sel) - 1
+        row  = rows[idx]
+        drow = rows_display[idx]
+        pred_id = row["id"]
+
+        c_left, c_right = st.columns([1, 2])
+        with c_left:
+            # Criteria snapshot
+            feats = row.get("features") or {}
+            card(f"<div style='background:#0a1525;border:1px solid #1a2f4a;border-radius:8px;padding:12px 16px;'>"
+                 f"<div style='color:#4A7FA5;font-size:10px;font-weight:700;letter-spacing:.5px;margin-bottom:8px;'>CRITERIA AT PICK TIME</div>"
+                 f"<table style='width:100%;font-size:12px;border-collapse:collapse;'>"
+                 f"<tr><td style='color:#8aaccc;'>Minervini</td><td style='color:#fff;font-weight:700;text-align:right;'>{row.get('minervini') or '—'}/8</td></tr>"
+                 f"<tr><td style='color:#8aaccc;'>RSI</td><td style='color:#fff;font-weight:700;text-align:right;'>{row.get('rsi') or '—'}</td></tr>"
+                 f"<tr><td style='color:#8aaccc;'>RS Score</td><td style='color:#fff;font-weight:700;text-align:right;'>{row.get('rs_score') or '—'}</td></tr>"
+                 f"<tr><td style='color:#8aaccc;'>Volume Ratio</td><td style='color:#fff;font-weight:700;text-align:right;'>{(feats.get('volume_ratio') or '—')}</td></tr>"
+                 f"<tr><td style='color:#8aaccc;'>Sweep</td><td style='color:#{'1D9E75' if feats.get('sweep') else 'FF4D6A'};font-weight:700;text-align:right;'>{'✅' if feats.get('sweep') else '❌'}</td></tr>"
+                 f"<tr><td style='color:#8aaccc;'>Extended</td><td style='color:#{'FF4D6A' if feats.get('is_extended') else '1D9E75'};font-weight:700;text-align:right;'>{'Yes ⚠' if feats.get('is_extended') else 'No ✅'}</td></tr>"
+                 f"</table>"
+                 f"<div style='margin-top:10px;border-top:1px solid #1a2f4a;padding-top:8px;'>"
+                 f"<span style='color:#4A7FA5;font-size:10px;'>Status: </span>"
+                 f"<span style='font-weight:700;font-size:13px;'>{drow['Status']}</span>")
+            if row.get("failure_reason"):
+                fr_label = row["failure_reason"].replace("_", " ").title()
+                card(f"<div style='margin-top:6px;background:#FF4D6A18;border:1px solid #FF4D6A44;"
+                     f"border-radius:4px;padding:4px 8px;font-size:11px;color:#FF4D6A;'>"
+                     f"⚠ Failure: {fr_label}</div>")
+            card("</div></div>")
+
+        with c_right:
+            render_pick_chart(row.get("ticker", ""),
+                              str(row.get("pred_date", ""))[:10],
+                              row.get("entry") or 0,
+                              row.get("stop")  or 0,
+                              row.get("t1")    or 0)
+
+        # Notes editor
+        current_note = notes_map.get(pred_id, "")
+        st.markdown("##### 📝 Your notes on this pick")
+        new_note = st.text_area("", value=current_note, key=f"note_{pred_id}",
+                                height=80, max_chars=500,
+                                placeholder="Why you traded / passed, what you learned…",
+                                label_visibility="collapsed")
+        if new_note != current_note:
+            if st.button("💾 Save note", key=f"save_{pred_id}", type="primary"):
+                if user_id:
+                    ok = mldb.upsert_user_note(pred_id, user_id, new_note)
+                    if ok:
+                        notes_map[pred_id] = new_note
+                        st.success("Saved.")
+                    else:
+                        st.error("Save failed — check Supabase credentials.")
+                else:
+                    st.warning("Log in to save notes.")
+
+    # ── Calibration analysis ──────────────────────────────────────────
+    with st.expander("📐 Calibration Analysis — is win_prob well-calibrated?", expanded=False):
+        buckets = mldb.get_calibration_buckets(days=90)
+        if not buckets:
+            total_eval = sum(1 for r in rows if r.get("status") == "evaluated")
+            st.info(f"Need 60+ evaluated predictions for calibration. "
+                    f"Currently {total_eval} evaluated in the selected range. "
+                    f"Check back in a few weeks.")
+        else:
+            total_n = sum(b["n"] for b in buckets)
+            if total_n < 60:
+                st.info(f"Need 60+ evaluated predictions — have {total_n}. "
+                        "Calibration chart will appear once enough data accumulates.")
+            else:
+                cal_rows = []
+                for b in buckets:
+                    ideal = float(b["bucket"].rstrip("%+").split("-")[0]) / 100
+                    diff  = abs(b["hit_rate"] - ideal)
+                    flag  = "✓ aligned" if diff <= 0.12 else "⚠ overconfident" if b["hit_rate"] < ideal else "⚠ underconfident"
+                    cal_rows.append({
+                        "Win-Prob Bucket": b["bucket"],
+                        "Picks":           b["n"],
+                        "Hits":            b["hits"],
+                        "Actual Hit-Rate": f"{b['hit_rate']*100:.1f}%",
+                        "Calibration":     flag,
+                    })
+                st.dataframe(pd.DataFrame(cal_rows), use_container_width=True, hide_index=True)
+                st.caption("Aligned = model prediction within 12% of reality. "
+                           "Overconfident = model says 70% but reality is lower.")
+
+
+# ══════════════════════════════════════════════════════════════════════
 #  SETTINGS SAVE HELPER (routes to DB when logged in, file otherwise)
 # ══════════════════════════════════════════════════════════════════════
 def _save(cfg: dict):
@@ -2015,6 +2283,19 @@ def tab_admin(current_user: dict):
 # ══════════════════════════════════════════════════════════════════════
 def main():
     css()
+    if st.session_state.get("tv_mode"):
+        st.markdown("""<style>
+        [data-testid="stSidebar"]{display:none!important}
+        [data-testid="stHeader"]{display:none!important}
+        footer,[data-testid="stToolbar"]{display:none!important}
+        .main .block-container{max-width:100%!important;padding:0.8rem!important}
+        .stMarkdown p,div,span{font-size:1.2em!important}
+        h1{font-size:2.2em!important}h2{font-size:1.8em!important}
+        h3,h4{font-size:1.4em!important}
+        </style>
+        <div style='position:fixed;bottom:12px;right:16px;color:#4A7FA5;font-size:11px;z-index:9999;'>
+        📺 TV Mode · Chrome → right-click → Cast… to send to TV</div>""",
+        unsafe_allow_html=True)
 
     user = auth.get_current_user()
     if not user:
@@ -2025,7 +2306,7 @@ def main():
     cfg, market = sidebar(cfg)
 
     tab_names = ["📈 Today's Picks", "🤖 AI Copilot", "📊 Funds",
-                 "🔍 Stock Checker", "💼 Portfolio", "⚙️ Settings"]
+                 "🔍 Stock Checker", "💼 Portfolio", "⚙️ Settings", "📊 Track Record"]
     if user.get("is_admin"):
         tab_names.append("🔐 Admin")
 
@@ -2036,8 +2317,9 @@ def main():
     with tabs[3]: tab_checker(cfg, market)
     with tabs[4]: tab_portfolio(cfg, market)
     with tabs[5]: tab_settings(cfg, market)
-    if user.get("is_admin") and len(tabs) > 6:
-        with tabs[6]: tab_admin(user)
+    with tabs[6]: tab_track_record(cfg, market)
+    if user.get("is_admin") and len(tabs) > 7:
+        with tabs[7]: tab_admin(user)
 
 
 main()

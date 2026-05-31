@@ -18,7 +18,7 @@ Tables (see SETUP.md for the CREATE statements):
 """
 
 import os
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 import requests
 
@@ -142,18 +142,21 @@ def _date_ord(s):
         return None
 
 
-def update_prediction_outcome(pred_id, outcome_pct: float, hit: bool) -> bool:
+def update_prediction_outcome(pred_id, outcome_pct: float, hit: bool,
+                              failure_reason: str | None = None) -> bool:
     """Mark a prediction evaluated with its realised outcome. (Used by Phase 3.)"""
     url, key = _creds()
     if not url or not key:
         return False
     try:
+        payload = {"status": "evaluated", "outcome_pct": outcome_pct,
+                   "hit": hit, "evaluated_at": datetime.utcnow().isoformat()}
+        if failure_reason:
+            payload["failure_reason"] = failure_reason
         r = requests.patch(
             f"{url}/rest/v1/predictions?id=eq.{pred_id}",
             headers=_headers(key, "return=minimal"),
-            json={"status": "evaluated", "outcome_pct": outcome_pct,
-                  "hit": hit, "evaluated_at": datetime.utcnow().isoformat()},
-            timeout=12,
+            json=payload, timeout=12,
         )
         return r.status_code in (200, 204)
     except Exception as e:
@@ -229,3 +232,171 @@ def save_model_state(weights: dict, rolling_acc: dict, locked: bool = False) -> 
     except Exception as e:
         log.warning(f"save_model_state error: {e}")
     return False
+
+
+# ── Track Record queries ───────────────────────────────────────────────
+
+def get_recent_predictions(days: int = 30, market: str | None = None,
+                            track: str | None = None,
+                            signal: str | None = None) -> list[dict]:
+    """Returns predictions created in the last N days, newest first.
+    track / market filters are applied client-side (market stored as free text)."""
+    url, key = _creds()
+    if not url or not key:
+        return []
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
+    query = (f"{url}/rest/v1/predictions?pred_date=gte.{cutoff}"
+             f"&order=pred_date.desc&limit=500&select=*")
+    if signal:
+        query += f"&signal=eq.{requests.utils.quote(signal)}"
+    try:
+        r = requests.get(query, headers=_headers(key), timeout=15)
+        if r.status_code != 200:
+            return []
+        rows = r.json()
+        if market:
+            m = market.upper()
+            rows = [row for row in rows if m in (row.get("market") or "").upper()]
+        if track:
+            rows = [row for row in rows if _derive_track(row) == track]
+        return rows
+    except Exception as e:
+        log.warning(f"get_recent_predictions error: {e}")
+    return []
+
+
+def _derive_track(row: dict) -> str:
+    """Best-effort track derivation from a predictions row."""
+    payload = row.get("payload") or {}
+    if isinstance(payload, dict) and payload.get("track"):
+        return payload["track"]
+    if row.get("track"):
+        return row["track"]
+    features = row.get("features") or {}
+    if isinstance(features, dict) and features.get("is_penny"):
+        return "penny"
+    mkt = (row.get("market") or "").upper()
+    if "CRYPTO" in mkt or "BTC" in mkt:
+        return "crypto"
+    return "stock"
+
+
+def get_prediction_by_id(pred_id: int) -> dict | None:
+    """Single prediction with full payload + features for drill-down."""
+    url, key = _creds()
+    if not url or not key:
+        return None
+    try:
+        r = requests.get(f"{url}/rest/v1/predictions?id=eq.{pred_id}&select=*",
+                         headers=_headers(key), timeout=10)
+        if r.status_code == 200 and r.json():
+            return r.json()[0]
+    except Exception as e:
+        log.warning(f"get_prediction_by_id error: {e}")
+    return None
+
+
+def get_calibration_buckets(days: int = 90) -> list[dict]:
+    """Hit-rate per win_prob bucket over the last N days (50-60, 60-70, 70-80, 80+)."""
+    url, key = _creds()
+    if not url or not key:
+        return []
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
+    try:
+        r = requests.get(
+            f"{url}/rest/v1/predictions?status=eq.evaluated&pred_date=gte.{cutoff}"
+            f"&select=win_prob,hit",
+            headers=_headers(key), timeout=15,
+        )
+        if r.status_code != 200:
+            return []
+        rows = r.json()
+        out = []
+        for label, lo, hi in [("50-60%", 50, 60), ("60-70%", 60, 70),
+                               ("70-80%", 70, 80), ("80%+", 80, 101)]:
+            sub = [row for row in rows if lo <= (row.get("win_prob") or 0) < hi]
+            if not sub:
+                continue
+            n_hit = sum(1 for row in sub if row.get("hit"))
+            out.append({"bucket": label, "n": len(sub), "hits": n_hit,
+                        "hit_rate": round(n_hit / len(sub), 3)})
+        return out
+    except Exception as e:
+        log.warning(f"get_calibration_buckets error: {e}")
+    return []
+
+
+def get_retroactive_hits(hours: int = 24) -> list[dict]:
+    """Picks that flipped to HIT in the last N hours."""
+    url, key = _creds()
+    if not url or not key:
+        return []
+    cutoff = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
+    try:
+        r = requests.get(
+            f"{url}/rest/v1/predictions?status=eq.evaluated&hit=eq.true"
+            f"&evaluated_at=gte.{cutoff}&order=evaluated_at.desc&select=*",
+            headers=_headers(key), timeout=12,
+        )
+        if r.status_code == 200:
+            return r.json()
+    except Exception as e:
+        log.warning(f"get_retroactive_hits error: {e}")
+    return []
+
+
+# ── Per-user notes on predictions ─────────────────────────────────────
+
+def get_user_note(prediction_id: int, user_id: str) -> str:
+    url, key = _creds()
+    if not url or not key:
+        return ""
+    try:
+        r = requests.get(
+            f"{url}/rest/v1/prediction_notes"
+            f"?prediction_id=eq.{prediction_id}&user_id=eq.{user_id}&select=note",
+            headers=_headers(key), timeout=10,
+        )
+        if r.status_code == 200 and r.json():
+            return r.json()[0].get("note", "")
+    except Exception as e:
+        log.warning(f"get_user_note error: {e}")
+    return ""
+
+
+def upsert_user_note(prediction_id: int, user_id: str, note: str) -> bool:
+    url, key = _creds()
+    if not url or not key:
+        return False
+    try:
+        r = requests.post(
+            f"{url}/rest/v1/prediction_notes",
+            headers=_headers(key, "resolution=merge-duplicates,return=minimal"),
+            json={"prediction_id": prediction_id, "user_id": user_id,
+                  "note": note, "updated_at": datetime.utcnow().isoformat()},
+            timeout=10,
+        )
+        return r.status_code in (200, 201, 204)
+    except Exception as e:
+        log.warning(f"upsert_user_note error: {e}")
+    return False
+
+
+def get_user_notes_bulk(prediction_ids: list[int], user_id: str) -> dict[int, str]:
+    """Single round-trip for all visible notes — avoids N+1 queries."""
+    url, key = _creds()
+    if not url or not key or not prediction_ids:
+        return {}
+    ids_csv = ",".join(str(i) for i in prediction_ids)
+    try:
+        r = requests.get(
+            f"{url}/rest/v1/prediction_notes"
+            f"?prediction_id=in.({ids_csv})&user_id=eq.{user_id}"
+            f"&select=prediction_id,note",
+            headers=_headers(key), timeout=12,
+        )
+        if r.status_code == 200:
+            return {row["prediction_id"]: row.get("note", "") for row in r.json()}
+    except Exception as e:
+        log.warning(f"get_user_notes_bulk error: {e}")
+    return {}

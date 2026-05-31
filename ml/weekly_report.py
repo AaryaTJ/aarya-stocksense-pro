@@ -56,6 +56,16 @@ def _failure_patterns(rows: list[dict]) -> list[str]:
     return out
 
 
+def _failure_reason_counts(rows: list[dict]) -> dict[str, int]:
+    """Count auto-tagged failure reasons from the evaluator."""
+    counts: dict[str, int] = {}
+    for r in rows:
+        if not r.get("hit") and r.get("failure_reason"):
+            fr = r["failure_reason"]
+            counts[fr] = counts.get(fr, 0) + 1
+    return counts
+
+
 def _per_track_stats(rows: list[dict]) -> list[dict]:
     """Break out hit-rate by prediction track (stock/penny/crypto/options)."""
     buckets: dict[str, list] = {}
@@ -88,6 +98,7 @@ def send_weekly_report(tg_chat_ids: list[str] | None = None) -> tuple[bool, str]
     worst = sorted(rows, key=lambda r: r.get("outcome_pct") or 0)[:3]
     patterns = _failure_patterns(rows)
     track_stats = _per_track_stats(rows)
+    fail_counts = _failure_reason_counts(rows)
 
     # ── HTML email ────────────────────────────────────────────────
     def li(r):
@@ -121,6 +132,12 @@ def send_weekly_report(tg_chat_ids: list[str] | None = None) -> tuple[bool, str]
         pat_html = ("<h4 style='color:#FFB340;margin:18px 0 6px;'>&#9888; Failure patterns this week</h4>"
                     "<ul style='color:#C9D6E3;font-size:13px;padding-left:18px;'>"
                     + "".join(f"<li>{p}</li>" for p in patterns) + "</ul>")
+    if fail_counts:
+        fc_rows = "".join(
+            f"<li style='color:#C9D6E3;'><b>{fr.replace('_',' ').title()}</b>: {cnt}</li>"
+            for fr, cnt in sorted(fail_counts.items(), key=lambda x: -x[1]))
+        pat_html += ("<h4 style='color:#FF4D6A;margin:14px 0 6px;'>&#128683; Top failure modes</h4>"
+                     f"<ul style='font-size:13px;padding-left:18px;'>{fc_rows}</ul>")
 
     body = (
         f"<div style='font-size:13px;color:#C9D6E3;margin-bottom:14px;'>"
@@ -161,6 +178,9 @@ def send_weekly_report(tg_chat_ids: list[str] | None = None) -> tuple[bool, str]
     )
     if patterns:
         tg_msg += "\n\nFailure patterns:\n" + "\n".join(f"- {p}" for p in patterns)
+    if fail_counts:
+        tg_msg += "\n\nTop failure modes:\n" + "\n".join(
+            f"  {fr}: {cnt}" for fr, cnt in sorted(fail_counts.items(), key=lambda x: -x[1]))
 
     for cid in (tg_chat_ids or []):
         try:

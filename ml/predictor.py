@@ -84,6 +84,27 @@ def _pred_to_row(pred: dict) -> dict:
 
 # ── Per-track hit threshold ───────────────────────────────────────────
 
+def _classify_failure(payload: dict, sub, entry: float) -> str:
+    """Classify why a pick failed. Returns one of four tags."""
+    rsi_entry = (payload or {}).get("rsi", 0) or 0
+    if rsi_entry >= 75:
+        return "rsi_overheated_at_entry"
+    try:
+        closes = sub["Close"].squeeze()
+        sma50 = closes.rolling(50, min_periods=10).mean()
+        if (closes < sma50).any():
+            return "broke_50dma"
+        vol = sub["Volume"].squeeze()
+        if len(vol) >= 10:
+            vol_early = float(vol.iloc[:5].mean())
+            vol_late  = float(vol.iloc[-5:].mean())
+            if vol_early > 0 and vol_late / vol_early < 0.5:
+                return "volume_dried_up"
+    except Exception:
+        pass
+    return "general_drawdown"
+
+
 def _hit_threshold_for(payload: dict) -> float:
     """Return the MFE hit threshold for a prediction payload based on its track."""
     track = (payload or {}).get("track", "stock")
@@ -123,7 +144,8 @@ def evaluate_open_predictions() -> tuple[int, int, int]:
             hit_bar  = _hit_threshold_for(payload)
             hit      = mfe >= hit_bar
             soft        = mfe >= SOFT_HIT_PCT
-            if mldb.update_prediction_outcome(r["id"], outcome_pct, hit):
+            failure_reason = None if hit else _classify_failure(payload, sub, entry)
+            if mldb.update_prediction_outcome(r["id"], outcome_pct, hit, failure_reason):
                 n += 1
                 n_hit  += 1 if hit  else 0
                 n_soft += 1 if soft else 0
